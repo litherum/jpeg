@@ -21,7 +21,7 @@ decodeMCU :: (Integral a, Integral b) => [(Word8, HuffmanTree Word8, HuffmanTree
 decodeMCU info = helper info []
   where helper [] l = return $ reverse l
         helper ((c, dctree, actree, dequantization_table) : t) l = do
-          data_unit <- sequence $ replicate c $ decodeDataUnit dctree actree dequantization_table
+          data_unit <- sequence $ replicate (fromIntegral c) $ decodeDataUnit dctree actree dequantization_table
           helper t $ data_unit : l
 
 -- E.2.4
@@ -34,29 +34,31 @@ decodeRestartInterval info = do
           (mcu, s') <- runStateT (decodeMCU info) s
           (helper s' $ mcu : l) <|> (many0 (notWord8 0xFF) >> return l)
 
+parseSingleScanComponent :: Integral a => JPEGState -> ScanComponent -> StateT JPEGState Parser (M.Map Word8 [[a]])
 parseSingleScanComponent s component = do
-  interval1 <- trace (show scan_header) $ lift $ decodeRestartInterval parseArray
-  intervals <- lift $ ((decodeIntervals (scanComponents scan_header) [interval1]) <|> (return [interval1]))
+  interval1 <- lift $ decodeRestartInterval parseArray
+  intervals <- lift $ ((decodeIntervals interval1) <|> (return interval1))
   return $ M.singleton (cs component) $ map (head . head) intervals
   where parseArray = [( 1
                      , (fst $ huffmanTrees s) M.! (td component)
                      , (snd $ huffmanTrees s) M.! (ta component)
                      , (quantizationTables s) M.! (tq $ (frameComponents $ frameHeader s) M.! (cs component))
                      )]
-        decodeIntervals scan_components l = do
+        decodeIntervals :: Integral a => [[[[a]]]] -> Parser [[[[a]]]]
+        decodeIntervals l = do
           n <- parseRST
           when (n /= (length l) `mod` 8) $ fail "Invalid RST value"
           interval <- decodeRestartInterval parseArray
-          (decodeIntervals scan_components s (interval ++ l)) <|> return l
+          (decodeIntervals (interval ++ l)) <|> return l
   
-parseMultipleScanComponents s components = return []
+parseMultipleScanComponents s components = return M.empty
 
 decodeScan = do
   s <- get
   s' <- lift $ parseTablesMisc s
   put s'
   scan_header <- lift $ parseScanHeader
-  if length (scanComponents scan_header) == 1
+  trace (show scan_header) $ if length (scanComponents scan_header) == 1
     then parseSingleScanComponent s' $ head $ scanComponents scan_header
     else parseMultipleScanComponents s' $ scanComponents scan_header
 {-
@@ -97,15 +99,15 @@ decodeFrame = do
   y' <- parseDNLSegment <|> (return $ y $ frameHeader s')
   let s'' = s' {frameHeader = (frameHeader s') {y = y'}}
   scans <- parseRemainingScans $ s''
-  let all_scans = M.union first_scan scans
-  mapM (\ (k, v) -> outputPGM ("output" ++ (show k) ++ ".pgm") v) $ M.toList all_scans
+  return $ M.union first_scan scans
   where parseRemainingScans s = (do
           (o, s') <- runStateT decodeScan s
           os <- parseRemainingScans s'
-          return $ M.union o os) <|> return []
+          return $ M.union o os) <|> return M.empty
 
 decodeJPEG = do
   parseSOI
   o <- decodeFrame
   parseEOI
   return o
+

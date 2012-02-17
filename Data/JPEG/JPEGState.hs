@@ -18,7 +18,7 @@ import Data.JPEG.Util
 
 type QuantizationTables = M.Map Word8 [Word16]
 
-type HuffmanTrees = (M.Map Int (HuffmanTree Word8), M.Map Int (HuffmanTree Word8))
+type HuffmanTrees = (M.Map Word8 (HuffmanTree Word8), M.Map Word8 (HuffmanTree Word8))
 
 data ArithmeticConditioningTable = ArithmeticConditioningTableAC Int Int
                                  | ArithmeticConditioningTableDC Int Int
@@ -41,7 +41,7 @@ data FrameComponent = FrameComponent { h  :: Word8
                                      }
   deriving (Show)
 
-type FrameComponents = M.Map Int FrameComponent
+type FrameComponents = M.Map Word8 FrameComponent
 
 data FrameHeader = FrameHeader { n               :: Int
                                , p               :: Int
@@ -51,9 +51,9 @@ data FrameHeader = FrameHeader { n               :: Int
                                }
   deriving (Show)
 
-data ScanComponent = ScanComponent { cs :: Int
-                                   , td :: Int
-                                   , ta :: Int
+data ScanComponent = ScanComponent { cs :: Word8
+                                   , td :: Word8
+                                   , ta :: Word8
                                    }
   deriving (Show)
 
@@ -223,9 +223,7 @@ parseScanHeader = do
           cs <- anyWord8
           tdta <- anyWord8
           let (td, ta) = breakWord8 tdta
-          return $ ScanComponent (fromIntegral cs)
-                                 (fromIntegral td)
-                                 (fromIntegral ta)
+          return $ ScanComponent cs td ta
 
 parseFrameHeader :: Parser FrameHeader
 parseFrameHeader = do
