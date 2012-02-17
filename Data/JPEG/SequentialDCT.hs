@@ -102,7 +102,3 @@ idct l = map f indices
                       (cos (((2 * (fromIntegral y) + 1) * (fromIntegral v) * pi)/16))
         c 0 = 1.0 / (sqrt 2.0)
         c _ = 1.0
-
-indices :: [(Int, Int)]
-indices = (concat $ map (\ x -> map (\ y -> (y, x-y)) (if x `mod` 2 == 0 then [0..x] else [x,x-1..0])) [0..7]) ++
-          (concat $ map (\ x -> map (\ y -> (x-y, y)) (if x `mod` 2 == 0 then [7,6..x-7] else [x-7..7])) [8..15])
