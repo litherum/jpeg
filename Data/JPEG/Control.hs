@@ -53,6 +53,7 @@ parseSingleScanComponent s component = do
   
 parseMultipleScanComponents s components = return M.empty
 
+decodeScan :: Integral a => StateT JPEGState Parser (M.Map Word8 [[a]])
 decodeScan = do
   s <- get
   s' <- lift $ parseTablesMisc s
@@ -99,7 +100,7 @@ decodeFrame = do
   y' <- parseDNLSegment <|> (return $ y $ frameHeader s')
   let s'' = s' {frameHeader = (frameHeader s') {y = y'}}
   scans <- parseRemainingScans $ s''
-  return $ M.union first_scan scans
+  return $ M.map (rearrange (fromIntegral $ x $ frameHeader s'') (fromIntegral $ y $ frameHeader s'')) $ M.union first_scan scans
   where parseRemainingScans s = (do
           (o, s') <- runStateT decodeScan s
           os <- parseRemainingScans s'

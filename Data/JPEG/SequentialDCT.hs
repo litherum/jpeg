@@ -92,6 +92,7 @@ decodeDataUnit dctree actree dequantizationtable = do
   let unit = (pred + d) : acs
   return $ map (clamp 0 255 . floor . (+ 128)) $ idct $ zipWith (*) (map fromIntegral dequantizationtable) unit
 
+clamp :: Ord c => c -> c -> c -> c
 clamp l h = max l . min h
 
 idct :: (Integral a, Floating b) => [a] -> [b]
