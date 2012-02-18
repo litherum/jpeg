@@ -3,7 +3,6 @@ module Data.JPEG.Markers where
 import Data.Attoparsec
 import Data.Attoparsec.Binary
 import Data.Word
-import Debug.Trace (trace)
 
 parseSOI :: Parser ()
 parseSOI = do
@@ -15,7 +14,6 @@ parseEOI :: Parser ()
 parseEOI = do
   word8 0xFF
   word8 0xD9
-  trace "Success!" $ return ()
   return ()
 
 parseDQT :: Parser ()

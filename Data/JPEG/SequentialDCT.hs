@@ -80,7 +80,7 @@ decodeACCoefficients tree = do
                else return $ replicate k 0 : zz
              else do
                o <- receive s
-               helper (k - (fromIntegral r) - 1) $ [extend (fromIntegral o) $ fromIntegral s] : zz
+               helper (k - (fromIntegral r) - 1) $ [(extend (fromIntegral o) $ fromIntegral s)] : (replicate (fromIntegral r) 0) : zz
 
 decodeDataUnit :: (Integral b, Integral a) => HuffmanTree Word8 -> HuffmanTree Word8 -> [a] -> StateT BitState Parser [b]
 decodeDataUnit dctree actree dequantizationtable = do
