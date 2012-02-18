@@ -35,10 +35,9 @@ indices' x y = m M.! (x, y)
 roundUp :: Integral a => a -> a -> a
 roundUp a b
   | a `mod` b == 0 = a `div` b
-  | otherwise = a `div` b + 1
+  | otherwise = (a `div` b) + 1
 
 rearrange :: Int -> Int -> [[b]] -> [[b]]
 rearrange x' y' blocks = map (\ y -> map (\ x -> (blocks !! blockindex x y) !! indices' (x `mod` 8) (y `mod` 8)) [0..x'-1]) [0..y'-1]
   where width_in_blocks = x' `roundUp` 8
         blockindex u v = width_in_blocks * (v `div` 8) + (u `div` 8)
-        

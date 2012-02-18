@@ -13,7 +13,7 @@ import Data.JPEG.Util
 -- F.2.2.1
 extend :: (Bits a, Ord a) => a -> Int -> a
 extend v t
-  | v == 0 = 0
+  | v == 0 && t == 0 = 0
   | v < vt = v + (-1 `shiftL` t) + 1
   | otherwise = v
   where vt = 2 ^ (t - 1)
@@ -49,7 +49,7 @@ receive s = helper s 0 0
            helper s (i + 1) (v `shiftL` 1 + nb)
 
 -- F.2.2.3
-decode :: HuffmanTree a -> StateT BitState Parser a
+--decode :: HuffmanTree a -> StateT BitState Parser a
 decode Empty = lift $ fail "Value not in huffman tree"
 decode (Leaf x) = return x
 decode (Node l r) = do
@@ -80,17 +80,17 @@ decodeACCoefficients tree = do
                else return $ replicate k 0 : zz
              else do
                o <- receive s
-               helper (k - 1) $ [extend (fromIntegral o) $ fromIntegral s] : zz
+               helper (k - (fromIntegral r) - 1) $ [extend (fromIntegral o) $ fromIntegral s] : zz
 
 decodeDataUnit :: (Integral b, Integral a) => HuffmanTree Word8 -> HuffmanTree Word8 -> [a] -> StateT BitState Parser [b]
 decodeDataUnit dctree actree dequantizationtable = do
   (_, _, pred) <- get
   d <- diff dctree
+  let dc = pred + d
   (cnt, b, _) <- get
-  put (cnt, b, d)
+  put (cnt, b, dc)
   acs <- decodeACCoefficients actree
-  let unit = (pred + d) : acs
-  return $ map (clamp 0 255 . floor . (+ 128)) $ idct $ zipWith (*) (map fromIntegral dequantizationtable) unit
+  return $ map (clamp 0 255 . floor . (+ 128)) $ idct $ zipWith (*) (map fromIntegral dequantizationtable) $ dc : acs
 
 clamp :: Ord c => c -> c -> c -> c
 clamp l h = max l . min h

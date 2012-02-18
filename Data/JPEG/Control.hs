@@ -32,7 +32,7 @@ decodeRestartInterval info = do
   return $ reverse o
   where helper s l = do
           (mcu, s') <- runStateT (decodeMCU info) s
-          (helper s' $ mcu : l) <|> (many0 (notWord8 0xFF) >> return l)
+          (helper s' $ mcu : l) <|> (many0 (notWord8 0xFF) >> (return $ mcu : l))
 
 parseSingleScanComponent :: Integral a => JPEGState -> ScanComponent -> StateT JPEGState Parser (M.Map Word8 [[a]])
 parseSingleScanComponent s component = do
@@ -59,7 +59,7 @@ decodeScan = do
   s' <- lift $ parseTablesMisc s
   put s'
   scan_header <- lift $ parseScanHeader
-  trace (show scan_header) $ if length (scanComponents scan_header) == 1
+  if length (scanComponents scan_header) == 1
     then parseSingleScanComponent s' $ head $ scanComponents scan_header
     else parseMultipleScanComponents s' $ scanComponents scan_header
 {-
@@ -92,11 +92,11 @@ decodeScan = do
                 frame_component = (frameComponents $ frameHeader s) M.! (cs c)
 -}
 
---decodeFrame :: Parser [[[[[Int]]]]]
+decodeFrame :: Integral a => Parser (M.Map Word8 [[a]])
 decodeFrame = do
   s <- parseTablesMisc def
   frame_header <- parseFrameHeader
-  (first_scan, s') <- trace (show frame_header) $ runStateT decodeScan $ s {frameHeader = frame_header}
+  (first_scan, s') <- runStateT decodeScan $ s {frameHeader = frame_header}
   y' <- parseDNLSegment <|> (return $ y $ frameHeader s')
   let s'' = s' {frameHeader = (frameHeader s') {y = y'}}
   scans <- parseRemainingScans $ s''
@@ -106,6 +106,7 @@ decodeFrame = do
           os <- parseRemainingScans s'
           return $ M.union o os) <|> return M.empty
 
+decodeJPEG :: Integral a => Parser (M.Map Word8 [[a]])
 decodeJPEG = do
   parseSOI
   o <- decodeFrame
