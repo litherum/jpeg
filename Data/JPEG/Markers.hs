@@ -46,12 +46,12 @@ parseCOM = do
   b <- word8 0xFE
   return ()
 
-parseAPP :: Parser Int
+parseAPP :: Parser Word8
 parseAPP = do
   word8 0xFF
   w <- anyWord8
   if w >= 0xE0 && w <= 0xEF
-    then return $ fromIntegral $ w - 0xE0
+    then return $ w - 0xE0
     else fail "APPn marker not recognized"
 
 parseDNL :: Parser ()
@@ -72,18 +72,18 @@ parseSOS = do
   word8 0xDA
   return ()
 
-parseSOF :: Parser Int
+parseSOF :: Parser Word8
 parseSOF = do
   word8 0xFF
   w <- anyWord8
   if w >= 0xC0 && w <= 0xCF && w /= 0xC4 && w /= 0xCC
-    then return $ fromIntegral $ w - 0xC0
+    then return $ w - 0xC0
     else fail "SOFn marker not recognized"
 
-parseRST :: Parser Int
+parseRST :: Parser Word8
 parseRST = do
   word8 0xFF
   w <- anyWord8
   if w >= 0xD0 && w <= 0xD7
-    then return $ fromIntegral $ w - 0xD0
+    then return $ w - 0xD0
     else fail "RSTn marker incorrect"

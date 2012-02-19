@@ -17,18 +17,18 @@ import Data.JPEG.SequentialDCT
 import Data.JPEG.Util
 
 -- E.2.5
-decodeMCU :: (Integral a, Integral b) => [(Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> StateT BitState Parser [[[b]]]
+decodeMCU :: (Integral a, Integral b) => [(Word8, Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> StateT BitState Parser [[[b]]]
 decodeMCU info = helper info []
   where helper [] l = trace (show $ map (\ a -> trace (show a) $ ()) (reverse l)) $ return $ reverse l
-        helper ((c, dctree, actree, dequantization_table) : t) l = do
-          data_unit <- sequence $ replicate (fromIntegral c) $ decodeDataUnit dctree actree dequantization_table
+        helper ((count, component, dctree, actree, dequantization_table) : t) l = do
+          data_unit <- sequence $ replicate (fromIntegral count) $ decodeDataUnit component dctree actree dequantization_table
           trace (show $ length data_unit) $ helper t $ data_unit : l
 
 -- E.2.4
-decodeRestartInterval :: (Integral a, Integral b) => [(Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> Parser [[[[b]]]]
+decodeRestartInterval :: (Integral a, Integral b) => [(Word8, Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> Parser [[[[b]]]]
 decodeRestartInterval info = do
   first_word8 <- anyWord8
-  o <- helper (8, first_word8, 0) []
+  o <- helper (8, first_word8, M.fromList $ map (\ (_, c, _, _, _) -> (c, 0)) info) []
   return $ reverse o
   where helper s l = do
           (mcu, s') <- runStateT (decodeMCU info) s
@@ -41,15 +41,16 @@ parseSingleScanComponent s component = do
   intervals <- lift $ ((decodeIntervals parse_array interval1) <|> (return interval1))
   return $ M.singleton (cs component) $ map (head . head) intervals
   where parse_array = [( 1
-                      , (fst $ huffmanTrees s) M.! (td component)
-                      , (snd $ huffmanTrees s) M.! (ta component)
-                      , (quantizationTables s) M.! (tq $ (frameComponents $ frameHeader s) M.! (cs component))
-                      )]
+                       , cs component
+                       , (fst $ huffmanTrees s) M.! (td component)
+                       , (snd $ huffmanTrees s) M.! (ta component)
+                       , (quantizationTables s) M.! (tq $ (frameComponents $ frameHeader s) M.! (cs component))
+                       )]
 
-decodeIntervals :: (Integral a, Integral b) => [(Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> [[[[b]]]] -> Parser [[[[b]]]]
+decodeIntervals :: (Integral a, Integral b) => [(Word8, Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> [[[[b]]]] -> Parser [[[[b]]]]
 decodeIntervals parse_array l = do
   n <- parseRST
-  when (n /= (length l) `mod` 8) $ fail "Invalid RST value"
+  when (n /= (fromIntegral $ length l) `mod` 8) $ fail "Invalid RST value"
   interval <- decodeRestartInterval parse_array
   (decodeIntervals parse_array (interval ++ l)) <|> return l
   
@@ -63,6 +64,7 @@ parseMultipleScanComponents s components = do
   where frame_header = frameHeader s
         f [] _ = []
         f (c : t) s = ( replication
+                      , cs c
                       , (fst $ huffmanTrees s) M.! (td c)
                       , (snd $ huffmanTrees s) M.! (ta c)
                       , (quantizationTables s) M.! (tq frame_component)
@@ -84,6 +86,7 @@ decodeScan = do
   s <- get
   s' <- lift $ parseTablesMisc s
   put s'
+  trace (show s') $ return ()
   scan_header <- lift $ parseScanHeader
   trace (show scan_header) $ return ()
   if length (scanComponents scan_header) == 1
@@ -94,6 +97,7 @@ decodeFrame :: Integral a => Parser (M.Map Word8 [[a]])
 decodeFrame = do
   s <- parseTablesMisc def
   frame_header <- parseFrameHeader
+  when (n frame_header /= 0 && n frame_header /= 1) $ fail "Unsupported frame!"
   trace (show frame_header) $ return ()
   (first_scan, s') <- runStateT decodeScan $ s {frameHeader = frame_header}
   y' <- parseDNLSegment <|> (return $ y $ frameHeader s')

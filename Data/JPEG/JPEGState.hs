@@ -31,7 +31,7 @@ data JPEGState = JPEGState { frameHeader                  :: FrameHeader
                            , huffmanTrees                 :: HuffmanTrees
                            , arithmeticConditioningTables :: [ArithmeticConditioningTable]
                            , restartInterval              :: Int
-                           , applicationData              :: [(Int, ApplicationData)]
+                           , applicationData              :: [(Word8, ApplicationData)]
                            }
   deriving (Show)
 
@@ -43,8 +43,8 @@ data FrameComponent = FrameComponent { h  :: Word8
 
 type FrameComponents = M.Map Word8 FrameComponent
 
-data FrameHeader = FrameHeader { n               :: Int
-                               , p               :: Int
+data FrameHeader = FrameHeader { n               :: Word8
+                               , p               :: Word8
                                , y               :: Word16
                                , x               :: Word16
                                , frameComponents :: FrameComponents
@@ -182,12 +182,12 @@ parseCommentState s = do
   _ <- parseComment
   return s
 
-parseApplicationData :: Parser (Int, ApplicationData)
+parseApplicationData :: Parser (Word8, ApplicationData)
 parseApplicationData = do
   n <- parseAPP
   lp <- anyWord16be
   d <- take $ (fromIntegral lp) - 2
-  return $ (fromIntegral n, d)
+  return $ (n, d)
 
 parseApplicationDataState :: JPEGState -> Parser JPEGState
 parseApplicationDataState s = do
@@ -234,11 +234,7 @@ parseFrameHeader = do
   x <- anyWord16be
   nf <- anyWord8
   component_specifications <- (sequence $ L.replicate (fromIntegral nf) parseComponent) >>= return . M.fromList
-  return $ FrameHeader (fromIntegral n)
-                       (fromIntegral p)
-                       (fromIntegral y)
-                       (fromIntegral x)
-                       component_specifications
+  return $ FrameHeader n p y x component_specifications
   where parseComponent = do
           c <- anyWord8
           hv <- anyWord8

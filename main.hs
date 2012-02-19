@@ -14,7 +14,8 @@ outputPGM filename v = withFile filename WriteMode (\ h -> do
 
 main = do
   --bs <- BS.readFile "2878123.jpg"
-  bs <- BS.readFile "70024.jpg"
+  --bs <- BS.readFile "70024.jpg"
+  bs <- BS.readFile "1.jpg"
   case feed (parse decodeJPEG bs) BS.empty of
     Done bs r -> putStrLn "Success!" >> (mapM_ (\ (k, v) -> outputPGM ("output_" ++ (show k) ++ ".pgm") v) $ M.toList r)
     _ -> putStrLn "Fail"
