@@ -73,8 +73,8 @@ parseMultipleScanComponents s components = do
         rasterize sc cluster_list = (cs sc, rearrange myWidth myHeight (width_in_clusters * cluster_width) block_order)
           where block_order = blockOrder width_in_clusters cluster_width cluster_height cluster_list
                 width_in_clusters = myWidth `roundUp` (cluster_width * 8)
-                cluster_width = fromIntegral $ h ((frameComponents frame_header) M.! (cs sc))
-                cluster_height = fromIntegral $ v ((frameComponents frame_header) M.! (cs sc))
+                cluster_width = fromIntegral $ h $ (frameComponents frame_header) M.! (cs sc)
+                cluster_height = fromIntegral $ v $ (frameComponents frame_header) M.! (cs sc)
                 myWidth = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
                 myHeight = ((fromIntegral $ y frame_header) * cluster_height) `roundUp` max_y
                 max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
@@ -90,7 +90,7 @@ decodeScan = do
     then parseSingleScanComponent s' $ head $ scanComponents scan_header
     else parseMultipleScanComponents s' $ scanComponents scan_header
 
-decodeFrame :: Integral a => Parser (M.Map Word8 [[a]])
+decodeFrame :: Integral a => Parser (JPEGState, M.Map Word8 [[a]])
 decodeFrame = do
   s <- parseTablesMisc def
   frame_header <- parseFrameHeader
@@ -99,13 +99,13 @@ decodeFrame = do
   y' <- parseDNLSegment <|> (return $ y $ frameHeader s')
   let s'' = s' {frameHeader = (frameHeader s') {y = y'}}
   scans <- parseRemainingScans $ s''
-  return $ M.union first_scan scans
+  return (s'', M.union first_scan scans)
   where parseRemainingScans s = (do
           (o, s') <- runStateT decodeScan s
           os <- parseRemainingScans s'
           return $ M.union o os) <|> return M.empty
 
-decodeJPEG :: Integral a => Parser (M.Map Word8 [[a]])
+decodeJPEG :: Integral a => Parser (JPEGState, M.Map Word8 [[a]])
 decodeJPEG = do
   parseSOI
   o <- decodeFrame

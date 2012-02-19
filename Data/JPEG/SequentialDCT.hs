@@ -96,9 +96,6 @@ decodeDataUnit c dctree actree dequantizationtable = do
   acs <- decodeACCoefficients actree
   return $ map (floor . clamp 0 255 . (+ 128)) $ idct $ zipWith (*) (map fromIntegral dequantizationtable) $ dc : acs
 
-clamp :: Ord c => c -> c -> c -> c
-clamp l h = max l . min h
-
 idct :: (Integral a, Floating b) => [a] -> [b]
 idct l = map f indices
   where f (x, y) = 0.25 * (sum $ map (\ ((u, v), a) -> g x y u v a) $ zip indices l)

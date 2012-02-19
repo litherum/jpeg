@@ -44,3 +44,6 @@ rearrange :: Int -> Int -> Int -> [[b]] -> [[b]]
 rearrange x' y' width_in_blocks blocks = map (\ y -> map (\ x -> (blocks_v V.! (blockindex x y)) V.! indices' (x `mod` 8) (y `mod` 8)) [0..x'-1]) [0..y'-1]
   where blockindex u v = width_in_blocks * (v `div` 8) + (u `div` 8)
         blocks_v = V.fromList $ map V.fromList blocks
+
+clamp :: Ord c => c -> c -> c -> c
+clamp l h = max l . min h
