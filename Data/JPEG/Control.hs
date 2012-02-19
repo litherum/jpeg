@@ -19,10 +19,10 @@ import Data.JPEG.Util
 -- E.2.5
 decodeMCU :: (Integral a, Integral b) => [(Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> StateT BitState Parser [[[b]]]
 decodeMCU info = helper info []
-  where helper [] l = return $ reverse l
+  where helper [] l = trace (show $ map (\ a -> trace (show a) $ ()) (reverse l)) $ return $ reverse l
         helper ((c, dctree, actree, dequantization_table) : t) l = do
           data_unit <- sequence $ replicate (fromIntegral c) $ decodeDataUnit dctree actree dequantization_table
-          helper t $ data_unit : l
+          trace (show $ length data_unit) $ helper t $ data_unit : l
 
 -- E.2.4
 decodeRestartInterval :: (Integral a, Integral b) => [(Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> Parser [[[[b]]]]
@@ -32,6 +32,7 @@ decodeRestartInterval info = do
   return $ reverse o
   where helper s l = do
           (mcu, s') <- runStateT (decodeMCU info) s
+          trace "New line" $ return ()
           (helper s' $ mcu : l) <|> (many0 (notWord8 0xFF) >> (return $ mcu : l))
 
 parseSingleScanComponent :: Integral a => JPEGState -> ScanComponent -> StateT JPEGState Parser (M.Map Word8 [[a]])
@@ -68,13 +69,13 @@ parseMultipleScanComponents s components = do
                       ) : (f t s)
           where replication = (h frame_component) * (v frame_component)
                 frame_component = (frameComponents $ frameHeader s) M.! (cs c)
-        rasterize sc cluster_list = (cs sc, rearrange (myWidth $ cs sc) (myHeight $ cs sc) block_order)
+        rasterize sc cluster_list = (trace ("Width_in_clusters: " ++ (show width_in_clusters) ++ " " ++ (show cluster_width))) $ (cs sc, rearrange myWidth myHeight (width_in_clusters * cluster_width) block_order)
           where block_order = blockOrder width_in_clusters cluster_width cluster_height cluster_list
-                width_in_clusters = (fromIntegral $ x frame_header) `roundUp` (cluster_width * 8)
+                width_in_clusters = myWidth `roundUp` (cluster_width * 8)
                 cluster_width = fromIntegral $ h ((frameComponents frame_header) M.! (cs sc))
                 cluster_height = fromIntegral $ v ((frameComponents frame_header) M.! (cs sc))
-                myWidth i = ((fromIntegral $ x $ frame_header) * (fromIntegral $ h ((frameComponents frame_header) M.! i))) `roundUp` max_x
-                myHeight i = ((fromIntegral $ y $ frame_header) * (fromIntegral $ v ((frameComponents frame_header) M.! i))) `roundUp` max_y
+                myWidth = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
+                myHeight = ((fromIntegral $ y frame_header) * cluster_height) `roundUp` max_y
                 max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
                 max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
 
@@ -84,6 +85,7 @@ decodeScan = do
   s' <- lift $ parseTablesMisc s
   put s'
   scan_header <- lift $ parseScanHeader
+  trace (show scan_header) $ return ()
   if length (scanComponents scan_header) == 1
     then parseSingleScanComponent s' $ head $ scanComponents scan_header
     else parseMultipleScanComponents s' $ scanComponents scan_header
@@ -92,6 +94,7 @@ decodeFrame :: Integral a => Parser (M.Map Word8 [[a]])
 decodeFrame = do
   s <- parseTablesMisc def
   frame_header <- parseFrameHeader
+  trace (show frame_header) $ return ()
   (first_scan, s') <- runStateT decodeScan $ s {frameHeader = frame_header}
   y' <- parseDNLSegment <|> (return $ y $ frameHeader s')
   let s'' = s' {frameHeader = (frameHeader s') {y = y'}}

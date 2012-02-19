@@ -7,6 +7,7 @@ import Data.Attoparsec
 import qualified Data.List as L
 import qualified Data.Map as M
 import qualified Data.Vector as V
+import Debug.Trace (trace)
 
 breakWord8 :: Word8 -> (Word8, Word8)
 breakWord8 w = (w `shiftR` 4, w .&. 0xF)
@@ -39,8 +40,7 @@ roundUp a b
   | a `mod` b == 0 = a `div` b
   | otherwise = (a `div` b) + 1
 
-rearrange :: Int -> Int -> [[b]] -> [[b]]
-rearrange x' y' blocks = map (\ y -> map (\ x -> (blocks_v V.! (blockindex x y)) V.! indices' (x `mod` 8) (y `mod` 8)) [0..x'-1]) [0..y'-1]
-  where width_in_blocks = x' `roundUp` 8
-        blockindex u v = width_in_blocks * (v `div` 8) + (u `div` 8)
+rearrange :: Int -> Int -> Int -> [[b]] -> [[b]]
+rearrange x' y' width_in_blocks blocks = trace ("Rearranging: " ++ (show x') ++ " x " ++ (show y') ++ " " ++ (show width_in_blocks) ++ " " ++ (show $ length blocks)) $ map (\ y -> map (\ x -> (blocks_v V.! (blockindex x y)) V.! indices' (x `mod` 8) (y `mod` 8)) [0..x'-1]) [0..y'-1]
+  where blockindex u v = width_in_blocks * (v `div` 8) + (u `div` 8)
         blocks_v = V.fromList $ map V.fromList blocks
