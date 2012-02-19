@@ -3,10 +3,11 @@ import qualified Data.ByteString as BS
 import Prelude hiding (readFile)
 import qualified Data.Map as M
 import System.IO
+import Data.Word
 
 import Data.JPEG.Control
 
-outputPGM :: Integral a => FilePath -> [[a]] -> IO ()
+outputPGM :: FilePath -> [[Word8]] -> IO ()
 outputPGM filename v = withFile filename WriteMode (\ h -> do
   hPutStr h "P5\n"
   hPutStr h $ (show $ length $ head v) ++ " " ++ (show $ length v) ++ " 255\n"

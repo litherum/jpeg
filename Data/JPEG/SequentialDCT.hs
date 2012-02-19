@@ -8,6 +8,7 @@ import Data.Compression.Huffman
 import Data.Word
 import Debug.Trace (trace)
 import qualified Data.Map as M
+import Data.Int
 
 import Data.JPEG.Util
 
@@ -33,7 +34,7 @@ nextBit = do
           b2 <- lift anyWord8
           if b2 == 0x00
             then out 8 b' pred
-            else lift $ trace "UNEXPECTED MARKER" $ fail "Unexpected marker"
+            else lift $ fail "Unexpected marker"
         else out 8 b' pred
     else out cnt b pred
   where out cnt b pred = do
@@ -41,29 +42,29 @@ nextBit = do
           return $ b `shiftR` 7
 
 -- F.2.2.4
-receive :: Num a => a -> StateT BitState Parser Word8
+receive :: (Bits b, Num a) => a -> StateT BitState Parser b
 receive s = helper s 0 0
   where helper s i v
-         | i == s = trace ("Receive: " ++ (show v)) $ return v
+         | i == s = return v
          | otherwise = do
            nb <- nextBit
-           helper s (i + 1) (v `shiftL` 1 + nb)
+           helper s (i + 1) ((v `shiftL` 1) + (fromIntegral nb))
 
 -- F.2.2.3
---decode :: HuffmanTree a -> StateT BitState Parser a
-decode Empty = lift $ trace "VALUE NOT IN HUFFMAN TREE" $ fail "Value not in huffman tree"
-decode (Leaf x) = trace ("Huff: " ++ (if x > 8 then "WRONG " else " ") ++ (show x)) $ return x
+decode :: HuffmanTree a -> StateT BitState Parser a
+decode Empty = lift $ fail "Value not in huffman tree"
+decode (Leaf x) = return x
 decode (Node l r) = do
   nb <- nextBit
   decode $ if nb == 1 then r else l
 
 -- F.2.2.1
-diff :: (Bits a, Integral a) => HuffmanTree Word8 -> StateT BitState Parser a
+diff :: (Integral a, Ord b, Bits b) => HuffmanTree a -> StateT BitState Parser b
 diff tree = do
   t <- decode tree
   d <- receive t
-  let o = extend (fromIntegral d) $ fromIntegral t
-  trace ("Extend: " ++ (show o)) $ return o
+  let o = extend d $ fromIntegral t
+  return o
 
 -- F.2.2.2
 decodeACCoefficients :: (Bits a, Integral a) => HuffmanTree Word8 -> StateT BitState Parser [a]
@@ -71,7 +72,7 @@ decodeACCoefficients tree = do
   o <- helper 63 []
   return $ concat $ reverse o
   where helper k zz
-         | k < 0 = lift $ trace "AC ELEMENTS NOT PROPERLY ALIGNED" $ fail "AC elements not properly aligned"
+         | k < 0 = lift $ fail "AC elements not properly aligned"
          | k == 0 = return zz
          | otherwise = do
            rs <- decode tree
@@ -82,8 +83,7 @@ decodeACCoefficients tree = do
                else return $ replicate k 0 : zz
              else do
                o <- receive s
-               let o' = extend (fromIntegral o) $ fromIntegral s
-               trace ("Extend: " ++ (show o')) $ return ()
+               let o' = extend o $ fromIntegral s
                helper (k - (fromIntegral r) - 1) $ [o'] : (replicate (fromIntegral r) 0) : zz
 
 decodeDataUnit :: (Integral b, Integral a) => Word8 -> HuffmanTree Word8 -> HuffmanTree Word8 -> [a] -> StateT BitState Parser [b]
@@ -94,8 +94,7 @@ decodeDataUnit c dctree actree dequantizationtable = do
   (cnt, b, _) <- get
   put (cnt, b, M.insert c dc pred_m)
   acs <- decodeACCoefficients actree
-  trace (show $ dc : acs) $ return ()
-  return $ map (clamp 0 255 . floor . (+ 128)) $ idct $ zipWith (*) (map fromIntegral dequantizationtable) $ dc : acs
+  return $ map (floor . clamp 0 255 . (+ 128)) $ idct $ zipWith (*) (map fromIntegral dequantizationtable) $ dc : acs
 
 clamp :: Ord c => c -> c -> c -> c
 clamp l h = max l . min h
