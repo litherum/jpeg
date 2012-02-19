@@ -38,13 +38,17 @@ parseSingleScanComponent :: Integral a => JPEGState -> ScanComponent -> StateT J
 parseSingleScanComponent s component = do
   interval1 <- lift $ decodeRestartInterval parse_array
   intervals <- lift $ ((decodeIntervals parse_array interval1) <|> (return interval1))
-  return $ M.singleton (cs component) $ map (head . head) intervals
+  return $ M.singleton (cs component) $ rasterize component $ map head intervals
   where parse_array = [( 1
                        , cs component
                        , (fst $ huffmanTrees s) M.! (td component)
                        , (snd $ huffmanTrees s) M.! (ta component)
                        , (quantizationTables s) M.! (tq $ (frameComponents $ frameHeader s) M.! (cs component))
                        )]
+        rasterize sc cluster_list = rearrange my_width my_height width_in_blocks $ map head cluster_list
+          where my_width = fromIntegral $ x $ frameHeader s
+                my_height = fromIntegral $ y $ frameHeader s
+                width_in_blocks = my_width `roundUp` 8
 
 decodeIntervals :: (Integral a, Integral b) => [(Word8, Word8, HuffmanTree Word8, HuffmanTree Word8, [a])] -> [[[[b]]]] -> Parser [[[[b]]]]
 decodeIntervals parse_array l = do
@@ -58,8 +62,7 @@ parseMultipleScanComponents s components = do
   interval1 <- lift $ decodeRestartInterval $ f components s
   intervals <- lift $ ((decodeIntervals (f components s) interval1) <|> (return interval1))
   let componentized = componentize intervals
-  let o = M.fromList $ zipWith (\ sc cluster_list -> rasterize sc cluster_list) components componentized
-  return o
+  return $ M.fromList $ zipWith (\ sc cluster_list -> rasterize sc cluster_list) components componentized
   where frame_header = frameHeader s
         f [] _ = []
         f (c : t) s = ( replication
@@ -70,13 +73,13 @@ parseMultipleScanComponents s components = do
                       ) : (f t s)
           where replication = (h frame_component) * (v frame_component)
                 frame_component = (frameComponents $ frameHeader s) M.! (cs c)
-        rasterize sc cluster_list = (cs sc, rearrange myWidth myHeight (width_in_clusters * cluster_width) block_order)
+        rasterize sc cluster_list = (cs sc, rearrange my_width my_height (width_in_clusters * cluster_width) block_order)
           where block_order = blockOrder width_in_clusters cluster_width cluster_height cluster_list
-                width_in_clusters = myWidth `roundUp` (cluster_width * 8)
+                width_in_clusters = my_width `roundUp` (cluster_width * 8)
                 cluster_width = fromIntegral $ h $ (frameComponents frame_header) M.! (cs sc)
                 cluster_height = fromIntegral $ v $ (frameComponents frame_header) M.! (cs sc)
-                myWidth = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
-                myHeight = ((fromIntegral $ y frame_header) * cluster_height) `roundUp` max_y
+                my_width = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
+                my_height = ((fromIntegral $ y frame_header) * cluster_height) `roundUp` max_y
                 max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
                 max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
 

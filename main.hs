@@ -26,7 +26,7 @@ outputPPM filename v = withFile filename WriteMode (\ h -> do
 
 outputCorrectImage :: (JPEGState, M.Map Word8 [[Word8]]) -> IO ()
 outputCorrectImage a@(s, m)
-  | isJFIF s = outputPPM "output.pgm" $ convertJFIFImage a
+  | isJFIF s && (M.size $ frameComponents $ frameHeader s) == 3 = outputPPM "output.pgm" $ convertJFIFImage a
   | otherwise = mapM_ (\ (k, v) -> outputPGM ("output_" ++ (show k) ++ ".pgm") v) $ M.toList m
 
 main = do
