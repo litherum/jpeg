@@ -8,12 +8,9 @@ import Data.JPEG.Util
 
 decodeJPEG' :: FrameHeader -> JPEGState -> (M.Map Word8 [[Int]]) -> (M.Map Word8 [[Int]])
 decodeJPEG' frame_header state encoded = rasterized
-  where dequantized = M.mapWithKey (\ k l -> map (zipWith (*) (map fromIntegral $ (quantizationTables state) M.! k)) l) encoded
-        idcted = M.map (map idct) dequantized
-        shifted = M.map (map $ map (+ 128)) idcted
-        clamped = M.map (map $ map $ clamp 0 255) shifted
-        floored = M.map (map $ map floor) clamped
-        rasterized = M.mapWithKey rasterize floored
+  where dequantized = M.mapWithKey (\ k l -> map (zipWith (*) (map fromIntegral $ (quantizationTables state) M.! (tq $ (frameComponents frame_header) M.! k))) l) encoded
+        idcted = M.map (map ((map ((+ 128) . (clamp 0 255) . floor)) . idct)) dequantized
+        rasterized = M.mapWithKey rasterize idcted
         rasterize cs blocks = rearrange my_width my_height (width_in_clusters * cluster_width) blocks
           where my_width = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
                 my_height = ((fromIntegral $ y frame_header) * cluster_height) `roundUp` max_y

@@ -266,16 +266,21 @@ parseScan frame_header = do
         interleaveComponents ([] : _) = []
         interleaveComponents l = (concat $ map head l) : (interleaveComponents $ map tail l)
 
-decodeFrame :: Parser (M.Map Word8 [[Int]])
+decodeFrame :: Parser (JPEGState, M.Map Word8 [[Int]])
 decodeFrame = do
   s <- parseTablesMisc def
   frame_header <- parseFrameHeader
   when (n frame_header /= 2) $ fail "Unsupported frame!"
-  s' <- execStateT (parseScan frame_header >> parseScan frame_header >> parseScan frame_header >> parseScan frame_header >> parseScan frame_header >> parseScan frame_header) s
+  s' <- execStateT (parseScan frame_header) s
   y' <- parseDNLSegment <|> (return $ y frame_header)
-  return $ {-decodeJPEG' frame_header s' $ -}partialData s'
+  let frame_header' = frame_header {y = y'}
+  s'' <- parseScans frame_header' s'
+  return $ (s'', decodeJPEG' frame_header' s'' $ partialData s'')
+  where parseScans frame_header s = do
+          s' <- execStateT (parseScan frame_header) s
+          (parseScans frame_header s') <|> (return s')
 
-decodeJPEG :: Parser (M.Map Word8 [[Int]])
+decodeJPEG :: Parser (JPEGState, M.Map Word8 [[Int]])
 decodeJPEG = do
   parseSOI
   o <- decodeFrame
