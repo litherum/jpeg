@@ -8,6 +8,8 @@ import Data.Compression.Huffman
 import Data.Word
 import Debug.Trace (trace)
 import qualified Data.Map as M
+import qualified Data.List as L
+import qualified Data.Vector as V
 import Data.Int
 
 import Data.JPEG.Util
@@ -63,8 +65,7 @@ diff :: (Integral a, Ord b, Bits b) => HuffmanTree a -> StateT BitState Parser b
 diff tree = do
   t <- decode tree
   d <- receive t
-  let o = extend d $ fromIntegral t
-  return o
+  return $ extend d $ fromIntegral t
 
 -- F.2.2.2
 decodeACCoefficients :: (Bits a, Integral a) => HuffmanTree Word8 -> StateT BitState Parser [a]
@@ -96,11 +97,26 @@ decodeDataUnit c dctree actree dequantizationtable = do
   acs <- decodeACCoefficients actree
   return $ map (floor . clamp 0 255 . (+ 128)) $ idct $ zipWith (*) (map fromIntegral dequantizationtable) $ dc : acs
 
-idct :: (Integral a, Floating b) => [a] -> [b]
-idct l = map f indices
-  where f (x, y) = 0.25 * (sum $ map (\ ((u, v), a) -> g x y u v a) $ zip indices l)
-        g x y u v a = (c u) * (c v) * (fromIntegral a) *
-                      (cos (((2 * (fromIntegral x) + 1) * (fromIntegral u) * pi)/16)) *
-                      (cos (((2 * (fromIntegral y) + 1) * (fromIntegral v) * pi)/16))
-        c 0 = 1.0 / (sqrt 2.0)
-        c _ = 1.0
+--idct :: [Int] -> [Double]
+idct l = o $ trans $ map (mv idct8) $ trans $ map (mv idct8) matrix
+  where matrix = map (\ y -> map (\ x -> v V.! (indices' x y)) [0..7]) [0..7]
+        o m = map (\ (x, y) -> (m !! y) !! x) indices
+        v = V.fromList $ map fromIntegral l
+
+dctmat n = (L.take (fromIntegral n) $ repeat $ sqrt (1.0/iN)) : (map row [2..n])
+  where
+    iN = fromIntegral n
+    row k = map (point k) [1..n]
+    point k i = (sqrt (2.0/iN)) * (cos ((pi * (2.0 * iI - 1.0) * (iK - 1.0)) / (2.0 * iN))) where
+        iI = fromIntegral i
+        iK = fromIntegral k
+
+idct8 = trans $ dctmat 8
+
+trans l = if any null l
+            then []
+            else map head l : trans (map tail l)
+
+vv v1 v2 = sum $ map (uncurry (*)) $ zip v1 v2
+mv mat vec = map (vv vec) mat
+mm mat mat2 = trans $ map (mv mat) $ trans mat2

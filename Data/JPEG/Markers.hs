@@ -1,4 +1,6 @@
 module Data.JPEG.Markers where
+import Debug.Trace (trace)
+import Control.Applicative
 
 import Data.Attoparsec
 import Data.Attoparsec.Binary
@@ -86,4 +88,4 @@ parseRST = do
   w <- anyWord8
   if w >= 0xD0 && w <= 0xD7
     then return $ w - 0xD0
-    else fail "RSTn marker incorrect"
+    else trace "RSTn marker incorrect" $ fail "RSTn marker incorrect"

@@ -10,6 +10,11 @@ import qualified Data.Vector as V
 import Control.DeepSeq
 import Debug.Trace (trace)
 
+parseNibbles :: Parser (Word8, Word8)
+parseNibbles = do
+  w <- anyWord8
+  return $ breakWord8 w
+
 breakWord8 :: Word8 -> (Word8, Word8)
 breakWord8 w = (w `shiftR` 4, w .&. 0xF)
 
@@ -31,9 +36,17 @@ blockOrder width_in_clusters cluster_width cluster_height cluster_order = map f 
                 clusterx = xblock `mod` cluster_width
                 clustery = yblock `mod` cluster_height
                 cluster_index = clustery * cluster_width + clusterx
-                
-                
         cluster_order_v = V.fromList $ map V.fromList cluster_order
+
+reverseBlockOrder :: Int -> Int -> Int -> [a] -> [[a]]
+reverseBlockOrder width_in_blocks cluster_width cluster_height block_order = helper matrix
+  where matrix = matrixHelper block_order
+          where matrixHelper [] = []
+                matrixHelper l = (L.take width_in_blocks l) : (matrixHelper $ L.drop width_in_blocks l)
+        helper [] = []
+        helper mat = rowHelper (L.take cluster_height mat) ++ helper (L.drop cluster_height mat)
+          where rowHelper ([] : _) = []
+                rowHelper l = (concat $ map (L.take cluster_width) l) : (rowHelper $ map (L.drop cluster_width) l)
 
 indices :: [(Int, Int)]
 indices = (concat $ map (\ x -> map (\ y -> (y, x-y)) (if x `mod` 2 == 0 then [0..x] else [x,x-1..0])) [0..7]) ++

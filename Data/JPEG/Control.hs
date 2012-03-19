@@ -73,15 +73,11 @@ parseMultipleScanComponents s components = do
                       ) : (f t s)
           where replication = (h frame_component) * (v frame_component)
                 frame_component = (frameComponents $ frameHeader s) M.! (cs c)
-        rasterize sc cluster_list = (cs sc, rearrange my_width my_height (width_in_clusters * cluster_width) block_order)
+        rasterize sc cluster_list = (cs sc, block_order)
           where block_order = blockOrder width_in_clusters cluster_width cluster_height cluster_list
                 width_in_clusters = my_width `roundUp` (cluster_width * 8)
                 cluster_width = fromIntegral $ h $ (frameComponents frame_header) M.! (cs sc)
                 cluster_height = fromIntegral $ v $ (frameComponents frame_header) M.! (cs sc)
-                my_width = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
-                my_height = ((fromIntegral $ y frame_header) * cluster_height) `roundUp` max_y
-                max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
-                max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
 
 decodeScan :: Integral a => StateT JPEGState Parser (M.Map Word8 [[a]])
 decodeScan = do

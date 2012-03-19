@@ -26,12 +26,12 @@ data ArithmeticConditioningTable = ArithmeticConditioningTableAC Int Int
 
 type ApplicationData = BS.ByteString
 
-data JPEGState = JPEGState { frameHeader                  :: FrameHeader
-                           , quantizationTables           :: QuantizationTables
+data JPEGState = JPEGState { quantizationTables           :: QuantizationTables
                            , huffmanTrees                 :: HuffmanTrees
                            , arithmeticConditioningTables :: [ArithmeticConditioningTable]
-                           , restartInterval              :: Int
+                           , restartInterval              :: Word16
                            , applicationData              :: [(Word8, ApplicationData)]
+                           , partialData                  :: M.Map Word8 [[Int]]
                            }
   deriving (Show)
 
@@ -58,20 +58,20 @@ data ScanComponent = ScanComponent { cs :: Word8
   deriving (Show)
 
 data ScanHeader = ScanHeader { scanComponents :: [ScanComponent]
-                             , ss             :: Int
-                             , se             :: Int
-                             , ah             :: Int
-                             , al             :: Int
+                             , ss             :: Word8
+                             , se             :: Word8
+                             , ah             :: Word8
+                             , al             :: Word8
                              }
   deriving (Show)
 
 instance Default JPEGState where
-  def = JPEGState { frameHeader                  = FrameHeader 0 0 0 0 M.empty
-                  , quantizationTables           = M.empty
+  def = JPEGState { quantizationTables           = M.empty
                   , huffmanTrees                 = (M.empty, M.empty)
                   , arithmeticConditioningTables = []
                   , restartInterval              = 0
                   , applicationData              = []
+                  , partialData                  = M.empty
                   }
 
 parseQuantizationTables :: Parser QuantizationTables
@@ -83,8 +83,7 @@ parseQuantizationTables = do
           | len == 0 = return M.empty
           | len < 0 = fail "Quantization table ended before it should have"
           | otherwise = do
-            pqtq <- anyWord8
-            let (pq, tq) = breakWord8 pqtq
+            (pq, tq) <- parseNibbles
             qs <- qks pq
             rest <- parseSegments $ len - 1 - (((fromIntegral pq) + 1) * 64)
             return $ M.insert tq qs rest
@@ -120,8 +119,7 @@ parseHuffmanTrees = do
           | len == 0 = return (M.empty, M.empty)
           | len < 0 = fail "Huffman table ended before it should have"
           | otherwise = do
-            tcth <- anyWord8
-            let (tc, th) = breakWord8 tcth
+            (tc, th) <- parseNibbles
             lengths <- count 16 anyWord8
             vs <- mapM (\ l -> count (fromIntegral l) anyWord8) lengths
             let huffman_tree = fromJust $ foldM (\ a (d, v) -> insertIntoHuffmanTree d v a) Empty $ concat $ map (\ (v', d) -> map (\ v -> (d, v)) v') $ zip vs [1..]
@@ -134,7 +132,7 @@ parseHuffmanTreesState :: JPEGState -> Parser JPEGState
 parseHuffmanTreesState s = do
   (dc_m', ac_m') <- parseHuffmanTrees
   let (dc_m, ac_m) = huffmanTrees s
-  return s {huffmanTrees = (M.union dc_m dc_m', M.union ac_m ac_m')}
+  return s {huffmanTrees = (M.union dc_m' dc_m, M.union ac_m' ac_m)}
 
 parseArithmeticConditioningTables :: Parser [ArithmeticConditioningTable]
 parseArithmeticConditioningTables = do
@@ -146,7 +144,7 @@ parseArithmeticConditioningTables = do
           | len < 0 = fail "Arithmetic conditioning table ended before it should have"
           | otherwise = do
             tctb <- anyWord8
-            let (tc, tb) = breakWord8 tctb
+            (tc, tb) <- parseNibbles
             cs <- anyWord8
             rest <- parseSegments $ len - 2
             return $ (if tc == 0
@@ -158,13 +156,13 @@ parseArithmeticConditioningTablesState s = do
   t <- parseArithmeticConditioningTables
   return s {arithmeticConditioningTables = t}
 
-parseRestartInterval :: Parser Int
+parseRestartInterval :: Parser Word16
 parseRestartInterval = do
   parseDRI
   lr <- anyWord16be
   when (lr /= 4) $ fail "DRI malformed"
   ri <- anyWord16be
-  return $ fromIntegral ri
+  return ri
 
 parseRestartIntervalState :: JPEGState -> Parser JPEGState
 parseRestartIntervalState s = do
@@ -212,17 +210,11 @@ parseScanHeader = do
   component_specifications <- count (fromIntegral ns) parseComponentSpecification
   ss <- anyWord8
   se <- anyWord8
-  ahal <- anyWord8
-  let (ah, al) = breakWord8 ahal
-  return $ ScanHeader component_specifications
-                      (fromIntegral ss)
-                      (fromIntegral se)
-                      (fromIntegral ah)
-                      (fromIntegral al)
+  (ah, al) <- parseNibbles
+  return $ ScanHeader component_specifications ss se ah al
   where parseComponentSpecification = do
           cs <- anyWord8
-          tdta <- anyWord8
-          let (td, ta) = breakWord8 tdta
+          (td, ta) <- parseNibbles
           return $ ScanComponent cs td ta
 
 parseFrameHeader :: Parser FrameHeader
@@ -237,8 +229,7 @@ parseFrameHeader = do
   return $ FrameHeader n p y x component_specifications
   where parseComponent = do
           c <- anyWord8
-          hv <- anyWord8
-          let (h, v) = breakWord8 hv
+          (h, v) <- parseNibbles
           tq <- anyWord8
           return $ (fromIntegral c, FrameComponent (fromIntegral h)
                                                    (fromIntegral v)
