@@ -31,7 +31,7 @@ data JPEGState = JPEGState { quantizationTables           :: QuantizationTables
                            , arithmeticConditioningTables :: [ArithmeticConditioningTable]
                            , restartInterval              :: Word16
                            , applicationData              :: [(Word8, ApplicationData)]
-                           , partialData                  :: M.Map Word8 [[Int]]
+                           , partialData                  :: M.Map Word8 [[[Int]]]
                            }
   deriving (Show)
 

@@ -1,6 +1,8 @@
 module Data.JPEG.ProgressiveDCT where
 
 import Control.Applicative
+import Control.DeepSeq
+import Control.Monad.Identity
 import Control.Monad.State
 import Data.Attoparsec
 import Data.Attoparsec.Binary
@@ -75,62 +77,33 @@ diff c tree = do
   put (cnt, b, M.insert c dc pred_m, eobrun)
   return dc
 
-type DataUnitFunc = [Int] -> Word8 -> HuffmanTree Word8 -> Word8 -> Word8 -> Word8 -> Word8 -> StateT BitState Parser [Int]
+type DataUnitFunc = [Int] -> Word8 -> HuffmanTree Word8 -> HuffmanTree Word8 -> Word8 -> Word8 -> Word8 -> Word8 -> StateT BitState Parser [Int]
+
+decodeSequentialDataUnit :: DataUnitFunc
+decodeSequentialDataUnit existing c dctree actree 0 63 0 0 = do
+  dc <- decodeDCDataUnit existing c dctree actree 0 63 0 0
+  ac <- decodeACScans dc c dctree actree 1 63 0 0
+  return ac
 
 decodeDCDataUnit :: DataUnitFunc
-decodeDCDataUnit _ c tree _ _ _ al = do
+decodeDCDataUnit _ c tree _ _ _ _ al = do
   dc <- diff c tree
   return $ (dc * (2 ^ al)) : replicate 63 0
 
 decodeSubsequentDCScans :: DataUnitFunc
-decodeSubsequentDCScans existing _ _ 0 0 ah al = do
+decodeSubsequentDCScans existing _ _ _ 0 0 ah al = do
   d <- receive (ah - al)
-  when ((head existing) .&. ((2 ^ ah) - 1) /= 0) $ trace "These bits are already set!" $ lift $ fail "These bits are already set!"
   return $ ((head existing) + (d * (2 ^ al))) : (tail existing)
 
--- F.2.2.2
-decodeACCoefficients :: DataUnitFunc
-decodeACCoefficients existing _ tree ss se _ al = do
-  mapM_ (\ x -> when (x /= 0) $ trace "These bits are already set!" $ lift $ fail "These bits are already set!") $ middle
-  (cnt, b, pred, eobrun) <- get
-  band <- if eobrun == 0
-            then helper (fromIntegral $ se - ss + 1) []
-            else do
-              put (cnt, b, pred, eobrun - 1)
-              return $ replicate (fromIntegral $ se - ss + 1) 0
-  return $ beginning ++ band ++ end
-  where beginning = L.take (fromIntegral ss) existing
-        middle = L.take (fromIntegral $ se - ss + 1) $ L.drop (fromIntegral ss) existing
-        end = L.drop (fromIntegral $ se + 1) existing
-        helper k zz
-         | k < 0 = trace "AC elements not properly aligned" $ lift $ fail "AC elements not properly aligned"
-         | k == 0 = return $ concat $ reverse zz
-         | otherwise = do
-           rs <- decode tree
-           let (r, s) = breakWord8 rs
-           if s == 0
-             then if r == 15
-               then helper (k - 16) $ (replicate 16 0) : zz
-               else do
-                 o <- receive r
-                 let eobrun = 2 ^ r + o
-                 (cnt, b, pred, _) <- get
-                 put (cnt, b, pred, eobrun - 1)
-                 helper 0 $ (replicate k 0) : zz
-             else do
-               o' <- receive s
-               let o = extend o' $ fromIntegral s
-               helper (k - (fromIntegral r) - 1) $ [o * (2 ^ al)] : (replicate (fromIntegral r) 0) : zz
-
-decodeSubsequentACScans :: DataUnitFunc
-decodeSubsequentACScans existing _ tree ss se ah al = do
-  mapM_ (\ x -> when (x .&. ((2 ^ ah) - 1) /= 0) $ trace "These bits are already set!" $ lift $ fail "These bits are already set!") middle
+decodeACScans :: DataUnitFunc
+decodeACScans existing _ _ tree ss se ah al = do
   (cnt, b, pred, eobrun) <- get
   if eobrun == 0
     then do
       o <- helper ss middle []
       return $ beginning ++ o ++ end
     else do
+      --trace ("EOBRUN: " ++ (show eobrun)) $ return ()
       put (cnt, b, pred, eobrun - 1)
       modified <- appendBitToEach al middle (-1)
       return $ beginning ++ modified ++ end
@@ -140,31 +113,26 @@ decodeSubsequentACScans existing _ tree ss se ah al = do
         helper k rzz lzz
          | k > se + 1 = trace "Successive elements not properly aligned" $ lift $ fail "Successive elements not properly aligned"
          | k == se + 1 && not (null rzz) = trace "rzz not null!" $ lift $ fail "rzz not null!"
-         | k == se + 1 = return $ concat $ reverse lzz
+         | k == se + 1 = {-trace "Done with MCU" $ -}return $ concat $ reverse lzz
          | otherwise = do
            rs <- decode tree
-           let (r, s)  = breakWord8 rs
-           if s == 0
-             then if r == 15
-               then do
-                 modified' <- appendBitToEach al rzz 15
-                 let modified = modified' ++ [0]
-                 helper (k + (fromIntegral $ length modified)) (drop (fromIntegral $ length modified) rzz) $ modified : lzz
-               else do
-                 o <- receive r
-                 let run_length = 2 ^ r + o
-                 (cnt, b, pred, _) <- get
-                 put (cnt, b, pred, run_length - 1)
-                 modified <- appendBitToEach al rzz (-1)
-                 helper (se + 1) [] $  modified : lzz
-             else do
-               when (s /= 1) $ trace "s != 1" $ lift $ fail "s != 1"
+           --trace (show $ breakWord8 rs) $ return ()
+           case breakWord8 rs of
+             (15, 0) -> do
+               modified' <- appendBitToEach al rzz 15
+               let modified = modified' ++ [0]
+               helper (k + (fromIntegral $ length modified)) (drop (fromIntegral $ length modified) rzz) $ modified : lzz
+             (r, 0) -> do
+               o <- receive r
+               (cnt, b, pred, _) <- get
+               put (cnt, b, pred, 2 ^ r + o - 1)
+               modified <- appendBitToEach al rzz (-1)
+               helper (se + 1) [] $  modified : lzz
+             (r, s) -> do
                o' <- receive s
-               let o = extend o' $ fromIntegral s
-               when (o /= 1 && o /= -1) $ trace "o is not +- 1" $ lift $ fail "o is not +- 1"
                modified <- appendBitToEach al rzz $ fromIntegral r
                let ml = fromIntegral $ length modified + 1
-               helper (k + fromIntegral ml) (drop ml rzz) $ [o * (2 ^ al)] : modified : lzz
+               helper (k + fromIntegral ml) (drop ml rzz) $ [(extend o' $ fromIntegral s) * (2 ^ al)] : modified : lzz
 
 appendBitToEach :: Bits a => Word8 -> [a] -> Int -> StateT BitState Parser [a]
 appendBitToEach _ [] _ = return []
@@ -179,16 +147,16 @@ appendBitToEach bitposition (v : vs) countzeros = do
 
 ----------------------------------------------------------------------------------------------------------------------
 
-decodeMCU :: [(Int, Word8, HuffmanTree Word8)] -> Word8 -> Word8 -> Word8 -> Word8 -> [[Int]] -> DataUnitFunc -> StateT BitState Parser [[[Int]]]
+decodeMCU :: [(Int, Word8, HuffmanTree Word8, HuffmanTree Word8)] -> Word8 -> Word8 -> Word8 -> Word8 -> [[Int]] -> DataUnitFunc -> StateT BitState Parser [[[Int]]]
 decodeMCU info ss se ah al existing dataUnitFunc = helper info existing []
   where helper [] _ l = return $ reverse l
-        helper ((count, component, tree) : t) es l = do
-          data_unit <- mapM (\ e -> dataUnitFunc e component tree ss se ah al) $ L.take (fromIntegral count) es
+        helper ((count, component, dctree, actree) : t) es l = do
+          data_unit <- mapM (\ e -> dataUnitFunc e component dctree actree ss se ah al) $ L.take (fromIntegral count) es
           helper t (L.drop (fromIntegral count) es) $ data_unit : l
 
-decodeRestartIntervals :: [(Int, Word8, HuffmanTree Word8)] -> Word8 -> Word8 -> Word8 -> Word8 -> Word16 -> [[[Int]]] -> DataUnitFunc -> Parser [[[[Int]]]]
+decodeRestartIntervals :: [(Int, Word8, HuffmanTree Word8, HuffmanTree Word8)] -> Word8 -> Word8 -> Word8 -> Word8 -> Word16 -> [[[Int]]] -> DataUnitFunc -> Parser [[[[Int]]]]
 decodeRestartIntervals info ss se ah al ri existing dataUnitFunc = do
-  o <- helper 0 (0, 0, M.fromList $ map (\ (_, c, _) -> (c, 0)) info, 0) existing []
+  o <- helper 0 (0, 0, M.fromList $ map (\ (_, c, _, _) -> (c, 0)) info, 0) existing []
   return $ reverse o
   where helper c s [] l = return l
         helper c s (e : es) l = do
@@ -196,10 +164,10 @@ decodeRestartIntervals info ss se ah al ri existing dataUnitFunc = do
             then do  -- Restart interval
               ri' <- parseRST
               when (ri' /= (fromIntegral $ ((c `quot` ri) - 1) `mod` 8)) $ trace "Restart interval incorrect" $ fail "Restart interval incorrect"
-              return (0, 0, M.fromList $ map (\ (_, c, _) -> (c, 0)) info, 0)
+              return (0, 0, M.fromList $ map (\ (_, c, _, _) -> (c, 0)) info, 0)
             else return s
           (mcu, s'') <- runStateT (decodeMCU info ss se ah al e dataUnitFunc) s'
-          (helper (c + 1) s'' es $ mcu : l) <|> (trace "Failed" $ (return $ mcu : l))
+          (helper (c + 1) s'' es $ mcu : l) <|> (trace ("Failed.") $ (return $ mcu : l))
 
 parseScan :: FrameHeader -> StateT JPEGState Parser ()
 parseScan frame_header = do
@@ -207,78 +175,66 @@ parseScan frame_header = do
   s <- lift $ parseTablesMisc s'
   scan_header <- lift $ parseScanHeader
   trace (show scan_header) $ return ()
-  case scan_header of
-    ScanHeader scan_components 0 0 0 al -> do -- first DC Scan
-      trace "First DC Scan!" $ return ()
-      updated <- lift $ decodeRestartIntervals
-        (map (component2Info s) scan_components)
-        0 0 0 al (restartInterval s)
-        (repeat (repeat []))
-        decodeDCDataUnit
-      put s {partialData = foldl1 M.union $ zipWith apply scan_components $ componentize updated}
-    ScanHeader scan_components 0 0 ah al -> do -- successive DC Scan
-      trace "Successive DC Scan!" $ return ()
-      updated <- lift $ decodeRestartIntervals
-        (map (component2Info s) scan_components)
-        0 0 ah al (restartInterval s)
-        (interleaveComponents $ map (breakUp (partialData s)) scan_components)
-        decodeSubsequentDCScans
-      put s {partialData = foldl1 M.union $ zipWith apply scan_components $ componentize updated}
-    ScanHeader [scan_component] ss se 0 al -> do -- first AC Scan
-      trace "First AC Scan!" $ return ()
-      updated <- lift $ decodeRestartIntervals
-        [( 1
-         , cs scan_component
-         , (snd $ huffmanTrees s) M.! (ta scan_component)
-         )]
-        ss se 0 al (restartInterval s)
-        (map return $ (partialData s) M.! (cs scan_component))
-        decodeACCoefficients
-      put s {partialData = M.insert (cs scan_component) (map (head . head) updated) $ partialData s}
-    ScanHeader [scan_component] ss se ah al -> do -- successive AC Scan
-      trace "Successive AC Scan!" $ return ()
-      updated <- lift $ decodeRestartIntervals
-        [( 1
-         , cs scan_component
-         , (snd $ huffmanTrees s) M.! (ta scan_component)
-         )]
-        ss se ah al (restartInterval s)
-        (map return $ (partialData s) M.! (cs scan_component))
-        decodeSubsequentACScans
-      put s {partialData = M.insert (cs scan_component) (map (head . head) updated) $ partialData s}
-  where component2Info s (ScanComponent cs td ta) = (count, cs, tree)
-          where frame_component = (frameComponents frame_header) M.! cs
-                count = fromIntegral $ h frame_component * v frame_component
-                tree = (fst $ huffmanTrees s) M.! td
-        apply (ScanComponent cs _ _) updated = M.singleton cs $ blockOrder width_in_clusters cluster_width cluster_height updated
-          where width_in_clusters = width_in_blocks `roundUp` (cluster_width * 8)
-                cluster_width = fromIntegral $ h $ (frameComponents frame_header) M.! cs
-                cluster_height = fromIntegral $ v $ (frameComponents frame_header) M.! cs
-                width_in_blocks = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
-                max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
-        breakUp :: M.Map Word8 [[Int]] -> ScanComponent -> [[[Int]]]
-        breakUp partial_data (ScanComponent cs _ _) = reverseBlockOrder width_in_blocks cluster_width cluster_height component_data
-          where component_data = partial_data M.! cs
-                cluster_width = fromIntegral $ h $ (frameComponents frame_header) M.! cs
-                cluster_height = fromIntegral $ v $ (frameComponents frame_header) M.! cs
-                width_in_blocks = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
-                max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
-        interleaveComponents ([] : _) = []
-        interleaveComponents l = (concat $ map head l) : (interleaveComponents $ map tail l)
+  helper s scan_header
+  where max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
+        max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
+        helper s scan_header = do
+          let (data_unit_func, existing) = case (n frame_header, scan_header) of
+                (0, _) -> (decodeSequentialDataUnit, repeat (repeat []))
+                (1, _) -> (decodeSequentialDataUnit, repeat (repeat []))
+                (2, ScanHeader _ 0 0 0 al) -> (decodeDCDataUnit, repeat (repeat []))
+                (2, ScanHeader scan_components 0 0 _ _) -> (decodeSubsequentDCScans, interleaveComponents $ map (breakUp (partialData s)) scan_components)
+                (2, ScanHeader scan_components _ _ _ _) -> (decodeACScans, interleaveComponents $ map (breakUp (partialData s)) scan_components)
+          updated <- lift $ decodeRestartIntervals (map (component2Info s) (scanComponents scan_header))
+            (ss scan_header) (se scan_header) (ah scan_header) (al scan_header) (restartInterval s) existing data_unit_func
+          let pd = foldl1 M.union $ zipWith (apply $ partialData s) (scanComponents scan_header) $ componentize updated
+          put s {partialData = (foldl1 M.union $ zipWith (apply $ partialData s) (scanComponents scan_header) $ componentize updated) `M.union` (partialData s)}
+          where ns' = length $ scanComponents scan_header
+                interleaveComponents ([] : _) = []
+                interleaveComponents l = (concat $ map head l) : (interleaveComponents $ map tail l)
+                component2Info s (ScanComponent cs td ta) = (count cs, cs, M.findWithDefault Empty td $ fst $ huffmanTrees s, M.findWithDefault Empty ta $ snd $ huffmanTrees s)
+                breakUp partial_data (ScanComponent cs _ _) = reverseBlockOrder
+                                                                (makeMultipleOf (imageWidthToBlockForComponent cs) $ fakeClusterWidth cs)
+                                                                (makeMultipleOf (imageHeightToBlockForComponent cs) $ fakeClusterHeight cs)
+                                                                (fakeClusterWidth cs)
+                                                                (fakeClusterHeight cs)
+                                                                (partial_data M.! cs)
+                apply previousBuffer' (ScanComponent cs _ _) updated
+                  | M.notMember cs previousBuffer' = M.singleton cs diff
+                  | otherwise = M.singleton cs wrap
+                  where previousBuffer = previousBuffer' M.! cs
+                        diff = blockOrder
+                                 ((imageWidthToBlockForComponent cs) `roundUp` (fakeClusterWidth cs))
+                                 (fakeClusterWidth cs)
+                                 (fakeClusterHeight cs)
+                                 updated
+                        wrap = zipWith wrapRow diff previousBuffer ++ drop (length diff) previousBuffer
+                        wrapRow new old = new ++ (drop (length new) old)
+                imageWidthToBlockForComponent cs = (((fromIntegral $ x frame_header) `roundUp` 8) * (clusterWidth cs)) `roundUp` max_x
+                imageHeightToBlockForComponent cs = (((fromIntegral $ y frame_header) `roundUp` 8) * (clusterHeight cs)) `roundUp` max_y
+                clusterWidth cs = fromIntegral $ h $ (frameComponents frame_header) M.! cs
+                clusterHeight cs = fromIntegral $ v $ (frameComponents frame_header) M.! cs
+                fakeClusterWidth cs
+                  | ns' == 1 = 1
+                  | otherwise = clusterWidth cs
+                fakeClusterHeight cs
+                  | ns' == 1 = 1
+                  | otherwise = clusterHeight cs
+                count cs = fakeClusterWidth cs * fakeClusterHeight cs
 
 decodeFrame :: Parser (JPEGState, M.Map Word8 [[Int]])
 decodeFrame = do
   s <- parseTablesMisc def
   frame_header <- parseFrameHeader
-  when (n frame_header /= 2) $ fail "Unsupported frame!"
+  trace (show frame_header) $ return ()
   s' <- execStateT (parseScan frame_header) s
-  y' <- parseDNLSegment <|> (return $ y frame_header)
+  y' <- trace "First scan parsed" $ parseDNLSegment <|> (return $ y frame_header)
   let frame_header' = frame_header {y = y'}
   s'' <- parseScans frame_header' s'
-  return $ (s'', decodeJPEG' frame_header' s'' $ partialData s'')
-  where parseScans frame_header s = do
+  return $ (s'', decodeJPEG' frame_header' s'')
+  where parseScans frame_header s = (do
           s' <- execStateT (parseScan frame_header) s
-          (parseScans frame_header s') <|> (return s')
+          parseScans frame_header s') <|> return s
 
 decodeJPEG :: Parser (JPEGState, M.Map Word8 [[Int]])
 decodeJPEG = do

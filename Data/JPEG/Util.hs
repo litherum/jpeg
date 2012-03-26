@@ -1,8 +1,9 @@
 module Data.JPEG.Util where
 
+import Control.Applicative
+import Control.DeepSeq
 import Data.Bits
 import Data.Word
-import Control.Applicative
 import Data.Attoparsec
 import qualified Data.List as L
 import qualified Data.Map as M
@@ -25,24 +26,16 @@ componentize :: [[a]] -> [[a]]
 componentize ([] : _) = []
 componentize l = (map head l) : (componentize $ map tail l)
 
-blockOrder :: Int -> Int -> Int -> [[a]] -> [a]
-blockOrder width_in_clusters cluster_width cluster_height cluster_order = map f [0 .. cluster_width * cluster_height * length cluster_order - 1]
-  where f index = (cluster_order_v V.! index_cluster) V.! cluster_index
-          where xblock = index `mod` (width_in_clusters * cluster_width)
-                yblock = index `div` (width_in_clusters * cluster_width)
-                xcluster = xblock `div` cluster_width
-                ycluster = yblock `div` cluster_height
-                index_cluster = ycluster * width_in_clusters + xcluster
-                clusterx = xblock `mod` cluster_width
-                clustery = yblock `mod` cluster_height
-                cluster_index = clustery * cluster_width + clusterx
-        cluster_order_v = V.fromList $ map V.fromList cluster_order
-
-reverseBlockOrder :: Int -> Int -> Int -> [a] -> [[a]]
-reverseBlockOrder width_in_blocks cluster_width cluster_height block_order = helper matrix
-  where matrix = matrixHelper block_order
+blockOrder :: Int -> Int -> Int -> [[a]] -> [[a]]
+blockOrder width_in_clusters cluster_width cluster_height cluster_order = concat $ map (\ clusterrow -> zipWith f (replicate cluster_height clusterrow) [0, cluster_width ..]) matrix
+  where matrix = matrixHelper cluster_order
           where matrixHelper [] = []
-                matrixHelper l = (L.take width_in_blocks l) : (matrixHelper $ L.drop width_in_blocks l)
+                matrixHelper cluster_order = L.take width_in_clusters cluster_order : matrixHelper (L.drop width_in_clusters cluster_order)
+        f clusterrow i = concat $ map ((L.take cluster_width) . (L.drop i)) clusterrow
+
+reverseBlockOrder :: Int -> Int -> Int -> Int -> [[a]] -> [[a]]
+reverseBlockOrder image_width_in_blocks image_height_in_blocks cluster_width cluster_height block_order = helper trimmed
+  where trimmed = L.take image_height_in_blocks $ map (L.take image_width_in_blocks) block_order
         helper [] = []
         helper mat = rowHelper (L.take cluster_height mat) ++ helper (L.drop cluster_height mat)
           where rowHelper ([] : _) = []
@@ -60,6 +53,9 @@ roundUp :: Integral a => a -> a -> a
 roundUp a b
   | a `mod` b == 0 = a `div` b
   | otherwise = (a `div` b) + 1
+
+makeMultipleOf :: Integral a => a -> a -> a
+makeMultipleOf a b = (a `roundUp` b) * b
 
 rearrange :: Int -> Int -> Int -> [[b]] -> [[b]]
 rearrange x' y' width_in_blocks blocks = map (\ y -> map (\ x -> (blocks_v V.! (blockindex x y)) V.! indices' (x `mod` 8) (y `mod` 8)) [0..x'-1]) [0..y'-1]
