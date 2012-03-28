@@ -1,6 +1,7 @@
 module Data.JPEG.Decode where
 
 import qualified Data.Map as M
+import Control.Monad.State
 import Data.Word
 
 --
@@ -19,21 +20,24 @@ import Data.Int( Int16 )
 import Data.JPEG.JPEGState
 import Data.JPEG.Util
 
-decodeJPEG' :: FrameHeader -> JPEGState -> (M.Map Word8 [[Int]])
-decodeJPEG' frame_header state = rasterized
-  where encoded = partialData state
-        serialized = M.map concat encoded
-        dequantized = M.mapWithKey (\ k l -> map (zipWith (*) (map fromIntegral $ (quantizationTables state) M.! (tq $ (frameComponents frame_header) M.! k))) l) serialized
-        idcted = M.map (map ((map ((clamp 0 255) . (+ 128))) . myFastIdct)) dequantized
-        rasterized = M.mapWithKey rasterize idcted
-        rasterize cs blocks = rearrange my_width my_height (width_in_clusters * cluster_width) blocks
-          where my_width = ((fromIntegral $ x frame_header) * cluster_width) `roundUp` max_x
-                my_height = ((fromIntegral $ y frame_header) * cluster_height) `roundUp` max_y
-                cluster_width = fromIntegral $ h $ (frameComponents frame_header) M.! cs
-                cluster_height = fromIntegral $ v $ (frameComponents frame_header) M.! cs
-                max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
-                max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
-                width_in_clusters = my_width `roundUp` (cluster_width * 8)
+decodeJPEG' :: JPEGState -> (M.Map Word8 [[Int]])
+decodeJPEG' state = M.mapWithKey decode $ partialData state
+  where max_x = fromIntegral $ foldl1 max $ map (\ k -> h $ (frameComponents $ frameHeader state) M.! k) $ M.keys $ frameComponents $ frameHeader state
+        max_y = fromIntegral $ foldl1 max $ map (\ k -> v $ (frameComponents $ frameHeader state) M.! k) $ M.keys $ frameComponents $ frameHeader state
+        decode k value = rasterize $ map (map (\ x -> execState (step1 >> step2) x)) value
+          where step1 = do
+                  block <- get
+                  put $ zipWith (*) (map fromIntegral $ (quantizationTables state) M.! (tq $ (frameComponents $ frameHeader state) M.! k)) block
+                step2 :: State [Int] ()
+                step2 = do
+                  block <- get
+                  put $ map ((clamp 0 255) . (+ 128)) $ myFastIdct block
+                rasterize :: [[[Int]]] -> [[Int]]
+                rasterize blocks = take (imageHeight) $ concat $ map rasterizeRow blocks
+                rasterizeRow :: [[Int]] -> [[Int]]
+                rasterizeRow row = map (take imageWidth) $ batches $ map deZigZag row
+                imageWidth = fromIntegral $ ((x $ frameHeader state) * (fromIntegral $ h $ (frameComponents $ frameHeader state) M.! k)) `roundUp` max_x
+                imageHeight = fromIntegral $ ((y $ frameHeader state) * (fromIntegral $ v $ (frameComponents $ frameHeader state) M.! k)) `roundUp` max_y
 
 referenceidct :: [Int] -> [Int]
 referenceidct l = map (floor . f) indices

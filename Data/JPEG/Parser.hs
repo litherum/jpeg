@@ -169,30 +169,32 @@ decodeRestartIntervals info ss se ah al ri existing dataUnitFunc = do
           (mcu, s'') <- runStateT (decodeMCU info ss se ah al e dataUnitFunc) s'
           (helper (c + 1) s'' es $ mcu : l) <|> (trace ("Failed.") $ (return $ mcu : l))
 
-parseScan :: FrameHeader -> StateT JPEGState Parser ()
-parseScan frame_header = do
+parseScan :: StateT JPEGState Parser ()
+parseScan = do
   s' <- get
   s <- lift $ parseTablesMisc s'
   scan_header <- lift $ parseScanHeader
   trace (show scan_header) $ return ()
-  helper s scan_header
-  where max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
-        max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
-        helper s scan_header = do
+  helper s (frameHeader s) scan_header
+    where helper s frame_header scan_header = do
           let (data_unit_func, existing) = case (n frame_header, scan_header) of
                 (0, _) -> (decodeSequentialDataUnit, repeat (repeat []))
                 (1, _) -> (decodeSequentialDataUnit, repeat (repeat []))
                 (2, ScanHeader _ 0 0 0 al) -> (decodeDCDataUnit, repeat (repeat []))
-                (2, ScanHeader scan_components 0 0 _ _) -> (decodeSubsequentDCScans, interleaveComponents $ map (breakUp (partialData s)) scan_components)
-                (2, ScanHeader scan_components _ _ _ _) -> (decodeACScans, interleaveComponents $ map (breakUp (partialData s)) scan_components)
+                (2, ScanHeader scan_components 0 0 _ _) -> (decodeSubsequentDCScans, batches $ map (breakUp (partialData s)) scan_components)
+                (2, ScanHeader scan_components _ _ _ _) -> (decodeACScans, batches $ map (breakUp (partialData s)) scan_components)
           updated <- lift $ decodeRestartIntervals (map (component2Info s) (scanComponents scan_header))
             (ss scan_header) (se scan_header) (ah scan_header) (al scan_header) (restartInterval s) existing data_unit_func
           let pd = foldl1 M.union $ zipWith (apply $ partialData s) (scanComponents scan_header) $ componentize updated
-          put s {partialData = (foldl1 M.union $ zipWith (apply $ partialData s) (scanComponents scan_header) $ componentize updated) `M.union` (partialData s)}
-          where ns' = length $ scanComponents scan_header
-                interleaveComponents ([] : _) = []
-                interleaveComponents l = (concat $ map head l) : (interleaveComponents $ map tail l)
-                component2Info s (ScanComponent cs td ta) = (count cs, cs, M.findWithDefault Empty td $ fst $ huffmanTrees s, M.findWithDefault Empty ta $ snd $ huffmanTrees s)
+          put s {partialData = foldl (flip M.union) (partialData s) $ zipWith (apply $ partialData s) (scanComponents scan_header) $ componentize updated}
+          where max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
+                max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
+                ns' = length $ scanComponents scan_header
+                component2Info s (ScanComponent cs td ta) = ( count cs
+                                                            , cs
+                                                            , M.findWithDefault Empty td $ fst $ huffmanTrees s
+                                                            , M.findWithDefault Empty ta $ snd $ huffmanTrees s
+                                                            )
                 breakUp partial_data (ScanComponent cs _ _) = reverseBlockOrder
                                                                 (makeMultipleOf (imageWidthToBlockForComponent cs) $ fakeClusterWidth cs)
                                                                 (makeMultipleOf (imageHeightToBlockForComponent cs) $ fakeClusterHeight cs)
@@ -227,14 +229,14 @@ decodeFrame = do
   s <- parseTablesMisc def
   frame_header <- parseFrameHeader
   trace (show frame_header) $ return ()
-  s' <- execStateT (parseScan frame_header) s
-  y' <- trace "First scan parsed" $ parseDNLSegment <|> (return $ y frame_header)
+  s' <- execStateT parseScan $ s { frameHeader = frame_header }
+  y' <- parseDNLSegment <|> (return $ y frame_header)
   let frame_header' = frame_header {y = y'}
-  s'' <- parseScans frame_header' s'
-  return $ (s'', decodeJPEG' frame_header' s'')
-  where parseScans frame_header s = (do
-          s' <- execStateT (parseScan frame_header) s
-          parseScans frame_header s') <|> return s
+  s'' <- parseScans $ s' { frameHeader = frame_header { y = y' } }
+  return $ (s'', decodeJPEG' s'')
+  where parseScans s = (do
+          s' <- execStateT parseScan s
+          parseScans s') <|> return s
 
 decodeJPEG :: Parser (JPEGState, M.Map Word8 [[Int]])
 decodeJPEG = do

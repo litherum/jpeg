@@ -32,6 +32,7 @@ data JPEGState = JPEGState { quantizationTables           :: QuantizationTables
                            , restartInterval              :: Word16
                            , applicationData              :: [(Word8, ApplicationData)]
                            , partialData                  :: M.Map Word8 [[[Int]]]
+                           , frameHeader                  :: FrameHeader
                            }
   deriving (Show)
 
@@ -72,6 +73,7 @@ instance Default JPEGState where
                   , restartInterval              = 0
                   , applicationData              = []
                   , partialData                  = M.empty
+                  , frameHeader                  = FrameHeader 0 0 0 0 M.empty
                   }
 
 parseQuantizationTables :: Parser QuantizationTables

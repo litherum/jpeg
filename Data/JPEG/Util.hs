@@ -49,6 +49,10 @@ indices' :: Int -> Int -> Int
 indices' x y = m `deepseq` (m M.! (x, y))
   where m = foldl (\ m (v, i) -> M.insert v i m) M.empty $ zip indices [0..]
 
+deZigZag :: [a] -> [[a]]
+deZigZag block = v `seq` map (\ y -> map (\ x -> v V.! (indices' x y)) [0..7]) [0..7]
+  where v = V.fromList block
+
 roundUp :: Integral a => a -> a -> a
 roundUp a b
   | a `mod` b == 0 = a `div` b
@@ -64,3 +68,6 @@ rearrange x' y' width_in_blocks blocks = map (\ y -> map (\ x -> (blocks_v V.! (
 
 clamp :: Ord c => c -> c -> c -> c
 clamp l h = max l . min h
+
+batches ([] : _) = []
+batches l = (concat $ map head l) : (batches $ map tail l)
