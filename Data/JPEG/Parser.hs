@@ -1,4 +1,4 @@
-module Data.JPEG.ProgressiveDCT where
+module Data.JPEG.Parser where
 
 import Control.Applicative
 import Control.DeepSeq
