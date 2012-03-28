@@ -32,9 +32,7 @@ decodeJPEG' state = M.mapWithKey decode $ partialData state
                 step2 = do
                   block <- get
                   put $ map ((clamp 0 255) . (+ 128)) $ myFastIdct block
-                rasterize :: [[[Int]]] -> [[Int]]
                 rasterize blocks = take (imageHeight) $ concat $ map rasterizeRow blocks
-                rasterizeRow :: [[Int]] -> [[Int]]
                 rasterizeRow row = map (take imageWidth) $ batches $ map deZigZag row
                 imageWidth = fromIntegral $ ((x $ frameHeader state) * (fromIntegral $ h $ (frameComponents $ frameHeader state) M.! k)) `roundUp` max_x
                 imageHeight = fromIntegral $ ((y $ frameHeader state) * (fromIntegral $ v $ (frameComponents $ frameHeader state) M.! k)) `roundUp` max_y
