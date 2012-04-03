@@ -24,14 +24,9 @@ decodeJPEG' :: JPEGState -> (M.Map Word8 [[Int]])
 decodeJPEG' state = M.mapWithKey decode $ partialData state
   where max_x = fromIntegral $ foldl1 max $ map (\ k -> h $ (frameComponents $ frameHeader state) M.! k) $ M.keys $ frameComponents $ frameHeader state
         max_y = fromIntegral $ foldl1 max $ map (\ k -> v $ (frameComponents $ frameHeader state) M.! k) $ M.keys $ frameComponents $ frameHeader state
-        decode k value = rasterize $ map (map (\ x -> execState (step1 >> step2) x)) value
-          where step1 = do
-                  block <- get
-                  put $ zipWith (*) (map fromIntegral $ (quantizationTables state) M.! (tq $ (frameComponents $ frameHeader state) M.! k)) block
-                step2 :: State [Int] ()
-                step2 = do
-                  block <- get
-                  put $ map ((clamp 0 255) . (+ 128)) $ myFastIdct block
+        decode k value = rasterize $ map (map (\ x -> (postprocess . referenceidct . dequantize) x)) value
+          where dequantize = zipWith (*) (map fromIntegral $ (quantizationTables state) M.! (tq $ (frameComponents $ frameHeader state) M.! k))
+                postprocess = map ((clamp 0 255) . (+ 128))
                 rasterize blocks = take (imageHeight) $ concat $ map rasterizeRow blocks
                 rasterizeRow row = map (take imageWidth) $ batches $ map deZigZag row
                 imageWidth = fromIntegral $ ((x $ frameHeader state) * (fromIntegral $ h $ (frameComponents $ frameHeader state) M.! k)) `roundUp` max_x
@@ -81,7 +76,7 @@ clip i = iclip !!! (i + 512)
 (.<<.) = shiftL
 (.>>.) = shiftR
 
-data IDctStage = IDctStage { 
+data IDctStage = IDctStage {
         x0 :: {-# UNPACK #-} !Int,
         x1 :: {-# UNPACK #-} !Int,
         x2 :: {-# UNPACK #-} !Int,
@@ -112,7 +107,7 @@ w7 = 565  -- 2048*sqrt(2)*cos(7*pi/16)
 idctRow :: MutableMacroBlock s Int16 -> Int ->  ST s ()
 idctRow blk idx = do
   xx0 <- blk .!!!. (0 + idx)
-  xx1 <- blk .!!!. (4 + idx) 
+  xx1 <- blk .!!!. (4 + idx)
   xx2 <- blk .!!!. (6 + idx)
   xx3 <- blk .!!!. (2 + idx)
   xx4 <- blk .!!!. (1 + idx)
@@ -128,7 +123,7 @@ idctRow blk idx = do
                                , x6 =  fromIntegral xx6
                                , x7 =  fromIntegral xx7
                                , x8 = 0
-                               } 
+                               }
 
       firstStage c = c { x4 = x8'  + (w1 - w7) * x4 c
                        , x5 = x8'  - (w1 + w7) * x5 c
@@ -140,7 +135,7 @@ idctRow blk idx = do
                 x8'' = w3 * (x6 c + x7 c)
 
       secondStage c = c { x0 = x0 c - x1 c
-                        , x8 = x0 c + x1 c 
+                        , x8 = x0 c + x1 c
                         , x1 = x1''
                         , x2 = x1' - (w2 + w6) * x2 c
                         , x3 = x1' + (w2 - w6) * x3 c
@@ -206,7 +201,7 @@ idctCol blk idx = do
                                , x6 =  fromIntegral xx6
                                , x7 =  fromIntegral xx7
                                , x8 = 0
-                               } 
+                               }
       firstStage c = c { x4 = (x8'  + (w1 - w7) * x4 c) .>>. 3
                        , x5 = (x8'  - (w1 + w7) * x5 c) .>>. 3
                        , x6 = (x8'' - (w3 - w5) * x6 c) .>>. 3
@@ -227,7 +222,7 @@ idctCol blk idx = do
                         }
           where x1'  = w6 * (x3 c + x2 c) + 4
                 x1'' = x4 c + x6 c
-  
+
       thirdStage c = c { x7 = x8 c + x3 c
                        , x8 = x8 c - x3 c
                        , x3 = x0 c + x2 c

@@ -103,7 +103,6 @@ decodeACScans existing _ _ tree ss se ah al = do
       o <- helper ss middle []
       return $ beginning ++ o ++ end
     else do
-      --trace ("EOBRUN: " ++ (show eobrun)) $ return ()
       put (cnt, b, pred, eobrun - 1)
       modified <- appendBitToEach al middle (-1)
       return $ beginning ++ modified ++ end
@@ -113,10 +112,9 @@ decodeACScans existing _ _ tree ss se ah al = do
         helper k rzz lzz
          | k > se + 1 = trace "Successive elements not properly aligned" $ lift $ fail "Successive elements not properly aligned"
          | k == se + 1 && not (null rzz) = trace "rzz not null!" $ lift $ fail "rzz not null!"
-         | k == se + 1 = {-trace "Done with MCU" $ -}return $ concat $ reverse lzz
+         | k == se + 1 = return $ concat $ reverse lzz
          | otherwise = do
            rs <- decode tree
-           --trace (show $ breakWord8 rs) $ return ()
            case breakWord8 rs of
              (15, 0) -> do
                modified' <- appendBitToEach al rzz 15
@@ -134,7 +132,7 @@ decodeACScans existing _ _ tree ss se ah al = do
                let ml = fromIntegral $ length modified + 1
                helper (k + fromIntegral ml) (drop ml rzz) $ [(extend o' $ fromIntegral s) * (2 ^ al)] : modified : lzz
 
-appendBitToEach :: Bits a => Word8 -> [a] -> Int -> StateT BitState Parser [a]
+appendBitToEach :: (Bits a, Ord a) => Word8 -> [a] -> Int -> StateT BitState Parser [a]
 appendBitToEach _ [] _ = return []
 appendBitToEach _ (0 : vs) 0 = return []
 appendBitToEach bitposition (0 : vs) countzeros = do
@@ -143,7 +141,8 @@ appendBitToEach bitposition (0 : vs) countzeros = do
 appendBitToEach bitposition (v : vs) countzeros = do
   b <- nextBit
   rest <- appendBitToEach bitposition vs countzeros
-  return $ (v + (fromIntegral b) * (2 ^ (fromIntegral bitposition))) : rest
+  let d = (fromIntegral b) * (2 ^ (fromIntegral bitposition))
+  return $ (if v < 0 then v - d else v + d) : rest
 
 ----------------------------------------------------------------------------------------------------------------------
 
@@ -243,4 +242,4 @@ decodeJPEG = do
   parseSOI
   o <- decodeFrame
   parseEOI
-  trace "HOLEY MOLEY" $ return o
+  return o

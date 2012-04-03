@@ -22,11 +22,11 @@ outputPPM filename v = withFile filename WriteMode (\ h -> do
   hPutStr h "P6\n"
   hPutStr h $ (show $ length $ head v) ++ " " ++ (show $ length v) ++ " 255\n"
   mapM_ (\ l -> mapM_ (\ (r, g, b) -> BS.hPut h (BS.pack [fromIntegral r, fromIntegral g, fromIntegral b])) l) v)
-  
 
-outputCorrectImage :: (JPEGState, M.Map Word8 [[Word8]]) -> IO ()
-outputCorrectImage a@(s, m)
-  | isJFIF s && (M.size $ frameComponents $ frameHeader s) == 3 = outputPPM "output.pgm" $ convertJFIFImage a
+
+outputCorrectImage :: (JPEGState, M.Map Word8 [[Word8]]) -> String -> IO ()
+outputCorrectImage a@(s, m) filename
+  | isJFIF s && (M.size $ frameComponents $ frameHeader s) == 3 = outputPPM filename $ convertJFIFImage a
   | otherwise = mapM_ (\ (k, v) -> outputPGM ("output_" ++ (show k) ++ ".pgm") v) $ M.toList m
 
 conv = M.map (map (map fromIntegral))
@@ -36,5 +36,5 @@ main = do
   when (null args) $ fail "No filename supplied"
   bs <- BS.readFile $ head args
   case feed (parse decodeJPEG bs) BS.empty of
-    Done bs (s, r) -> putStrLn "Success!" >> outputCorrectImage (s, conv r)
+    Done bs (s, r) -> putStrLn "Success!" >> outputCorrectImage (s, conv r) (args !! 1)
     _ -> putStrLn "Fail"
