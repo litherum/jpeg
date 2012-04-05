@@ -10,9 +10,12 @@ import Data.JPEG.JPEGState
 import Data.JPEG.Util
 
 isJFIF :: JPEGState -> Bool
+isJFIF _ = True
+{-
 isJFIF s = not $ null jfifs
   where app0s = [snd v | v <- applicationData s, fst v == 0]
         jfifs = filter (\ bs -> BS.take 5 bs == BS.pack [0x4A, 0x46, 0x49, 0x46, 0x00]) $ app0s
+-}
 
 resample :: Integral a => Rational -> Rational -> [[a]] -> [[a]]
 resample xfrac yfrac values = map (resample1 $ inc xfrac) $ resample1 (inc yfrac) values

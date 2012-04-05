@@ -159,10 +159,10 @@ decodeRestartIntervals info ss se ah al ri existing dataUnitFunc = do
   return $ reverse o
   where helper c s [] l = return l
         helper c s (e : es) l = do
-          s' <- if ri /= 0 && c /= 0 && c `mod` ri == 0
+          s' <- if ri /= 0 && c /= 0 && c `mod` (fromIntegral ri) == 0
             then do  -- Restart interval
               ri' <- parseRST
-              when (ri' /= (fromIntegral $ ((c `quot` ri) - 1) `mod` 8)) $ trace "Restart interval incorrect" $ fail "Restart interval incorrect"
+              when (ri' /= (fromIntegral $ ((c `quot` (fromIntegral ri)) - 1) `mod` 8)) $ trace "Restart interval incorrect" $ fail "Restart interval incorrect"
               return (0, 0, M.fromList $ map (\ (_, c, _, _) -> (c, 0)) info, 0)
             else return s
           (mcu, s'') <- runStateT (decodeMCU info ss se ah al e dataUnitFunc) s'
