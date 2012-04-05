@@ -27,7 +27,7 @@ outputPPM filename v = withFile filename WriteMode (\ h -> do
 outputCorrectImage :: (JPEGState, M.Map Word8 [[Word8]]) -> String -> IO ()
 outputCorrectImage a@(s, m) filename
   | isJFIF s && (M.size $ frameComponents $ frameHeader s) == 3 = outputPPM filename $ convertJFIFImage a
-  | otherwise = mapM_ (\ (k, v) -> outputPGM ("output_" ++ (show k) ++ ".pgm") v) $ M.toList m
+  | otherwise = putStrLn (show $ M.size $ frameComponents $ frameHeader s) >> (mapM_ (\ (k, v) -> outputPGM ("output_" ++ (show k) ++ ".pgm") v) $ M.toList m)
 
 conv = M.map (map (map fromIntegral))
 
@@ -36,5 +36,5 @@ main = do
   when (null args) $ fail "No filename supplied"
   bs <- BS.readFile $ head args
   case feed (parse decodeJPEG bs) BS.empty of
-    Done bs (s, r) -> putStrLn "Success!" >> outputCorrectImage (s, conv r) (args !! 1)
+    Done bs (s, r) -> putStrLn (show $ map fst $ applicationData s) >> outputCorrectImage (s, conv r) (args !! 1)
     _ -> putStrLn "Fail"
