@@ -1,6 +1,7 @@
 module Data.JPEG.JPEGState where
 
 import Control.Applicative ((<|>), pure)
+import Control.DeepSeq
 import Control.Monad (foldM, when)
 import Data.Attoparsec
 import Data.Attoparsec.Binary (anyWord16be)
@@ -12,64 +13,89 @@ import qualified Data.List as L
 import Data.Compression.Huffman
 import Data.Word
 import Prelude hiding (take)
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 
 import Data.JPEG.Markers
 import Data.JPEG.Util
 
-type QuantizationTables = M.Map Word8 [Word16]
+-- I'm hoping I don't need to deepseq things that are unpacked and strict.
 
-type HuffmanTrees = (M.Map Word8 (HuffmanTree Word8), M.Map Word8 (HuffmanTree Word8))
+type QuantizationTables = M.Map Word8 [Word16]
 
 data ArithmeticConditioningTable = ArithmeticConditioningTableAC Int Int
                                  | ArithmeticConditioningTableDC Int Int
   deriving (Show)
 
+type HuffmanTrees = (M.Map Word8 (HuffmanTree Word8), M.Map Word8 (HuffmanTree Word8))
+
 type ApplicationData = BS.ByteString
 
 data JPEGState = JPEGState { quantizationTables           :: QuantizationTables
                            , huffmanTrees                 :: HuffmanTrees
-                           , arithmeticConditioningTables :: [ArithmeticConditioningTable]
-                           , restartInterval              :: Word16
+                           , restartInterval              :: {-# UNPACK #-} !Word16
                            , applicationData              :: [(Word8, ApplicationData)]
-                           , partialData                  :: M.Map Word8 [[[Int]]]
+                           , partialData                  :: M.Map Word8 (V.Vector (V.Vector (U.Vector Int)))
                            , frameHeader                  :: FrameHeader
                            }
   deriving (Show)
 
-data FrameComponent = FrameComponent { h  :: Word8
-                                     , v  :: Word8
-                                     , tq :: Word8
+instance NFData JPEGState where
+  rnf (JPEGState { quantizationTables = quantization_tables
+                 , huffmanTrees       = huffman_trees
+                 , applicationData    = application_data
+                 , partialData        = partial_data
+                 , frameHeader        = frame_header
+                 })
+    = quantization_tables `deepseq`
+      huffman_trees       `deepseq`
+      application_data    `deepseq`
+      partial_data        `deepseq`
+      frame_header        `deepseq` ()
+
+data FrameComponent = FrameComponent { h  :: {-# UNPACK #-} !Word8
+                                     , v  :: {-# UNPACK #-} !Word8
+                                     , tq :: {-# UNPACK #-} !Word8
                                      }
   deriving (Show)
 
+instance NFData FrameComponent
+
 type FrameComponents = M.Map Word8 FrameComponent
 
-data FrameHeader = FrameHeader { n               :: Word8
-                               , p               :: Word8
-                               , y               :: Word16
-                               , x               :: Word16
+data FrameHeader = FrameHeader { n               :: {-# UNPACK #-} !Word8
+                               , p               :: {-# UNPACK #-} !Word8
+                               , y               :: {-# UNPACK #-} !Word16
+                               , x               :: {-# UNPACK #-} !Word16
                                , frameComponents :: FrameComponents
                                }
   deriving (Show)
 
-data ScanComponent = ScanComponent { cs :: Word8
-                                   , td :: Word8
-                                   , ta :: Word8
+instance NFData FrameHeader where
+  rnf frame_header = (frameComponents frame_header) `deepseq` ()
+
+data ScanComponent = ScanComponent { cs :: {-# UNPACK #-} !Word8
+                                   , td :: {-# UNPACK #-} !Word8
+                                   , ta :: {-# UNPACK #-} !Word8
                                    }
   deriving (Show)
 
+instance NFData ScanComponent
+
 data ScanHeader = ScanHeader { scanComponents :: [ScanComponent]
-                             , ss             :: Word8
-                             , se             :: Word8
-                             , ah             :: Word8
-                             , al             :: Word8
+                             , ss             ::  {-# UNPACK #-} !Word8
+                             , se             ::  {-# UNPACK #-} !Word8
+                             , ah             ::  {-# UNPACK #-} !Word8
+                             , al             ::  {-# UNPACK #-} !Word8
                              }
   deriving (Show)
+
+instance NFData ScanHeader where
+  rnf scan_header = (scanComponents scan_header) `deepseq` ()
 
 instance Default JPEGState where
   def = JPEGState { quantizationTables           = M.empty
                   , huffmanTrees                 = (M.empty, M.empty)
-                  , arithmeticConditioningTables = []
                   , restartInterval              = 0
                   , applicationData              = []
                   , partialData                  = M.empty
@@ -136,11 +162,12 @@ parseHuffmanTreesState s = do
   let (dc_m, ac_m) = huffmanTrees s
   return s {huffmanTrees = (M.union dc_m' dc_m, M.union ac_m' ac_m)}
 
-parseArithmeticConditioningTables :: Parser [ArithmeticConditioningTable]
+parseArithmeticConditioningTables :: Parser ()
 parseArithmeticConditioningTables = do
   parseDAC
   la <- anyWord16be
-  parseSegments $ fromIntegral $ la - 2
+  _ <- parseSegments $ fromIntegral $ la - 2
+  return ()
   where parseSegments len
           | len == 0 = return []
           | len < 0 = fail "Arithmetic conditioning table ended before it should have"
@@ -155,8 +182,8 @@ parseArithmeticConditioningTables = do
 
 parseArithmeticConditioningTablesState :: JPEGState -> Parser JPEGState
 parseArithmeticConditioningTablesState s = do
-  t <- parseArithmeticConditioningTables
-  return s {arithmeticConditioningTables = t}
+  parseArithmeticConditioningTables
+  return s
 
 parseRestartInterval :: Parser Word16
 parseRestartInterval = do

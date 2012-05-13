@@ -3,6 +3,7 @@ module Data.JPEG.Decode where
 import qualified Data.Map as M
 import Control.Monad.State
 import Data.Word
+import qualified Data.Vector.Unboxed as U
 
 --
 import qualified Data.Vector.Storable.Mutable as M
@@ -20,21 +21,24 @@ import Data.Int( Int16 )
 import Data.JPEG.JPEGState
 import Data.JPEG.Util
 
-decodeJPEG' :: JPEGState -> (M.Map Word8 [[Int]])
+decodeJPEG' :: JPEGState -> M.Map Word8 (Vector.Vector (U.Vector Int))
 decodeJPEG' state = M.mapWithKey decode $ partialData state
   where max_x = fromIntegral $ foldl1 max $ map (\ k -> h $ (frameComponents $ frameHeader state) M.! k) $ M.keys $ frameComponents $ frameHeader state
         max_y = fromIntegral $ foldl1 max $ map (\ k -> v $ (frameComponents $ frameHeader state) M.! k) $ M.keys $ frameComponents $ frameHeader state
-        decode k value = rasterize $ map (map (\ x -> (postprocess . referenceidct . dequantize) x)) value
-          where dequantize = zipWith (*) (map fromIntegral $ (quantizationTables state) M.! (tq $ (frameComponents $ frameHeader state) M.! k))
-                postprocess = map ((clamp 0 255) . (+ 128))
-                rasterize blocks = take (imageHeight) $ concat $ map rasterizeRow blocks
-                rasterizeRow row = map (take imageWidth) $ batches $ map deZigZag row
+        decode :: Word8 -> Vector.Vector (Vector.Vector (U.Vector Int)) -> Vector.Vector (U.Vector Int)
+        decode k value = rasterize $ Vector.map (Vector.map (\ x -> (postprocess . myFastIdct . dequantize) x)) value
+          where dequantize = U.zipWith (*) (U.fromList $ map fromIntegral $ (quantizationTables state) M.! (tq $ (frameComponents $ frameHeader state) M.! k))
+                postprocess = U.map ((clamp 0 255) . (+ 128))
+                rasterize :: Vector.Vector (Vector.Vector (U.Vector Int)) -> Vector.Vector (U.Vector Int)
+                rasterize blocks = Vector.take (imageHeight) $ concatVectors $ Vector.map rasterizeRow blocks
+                rasterizeRow :: Vector.Vector (U.Vector Int) -> Vector.Vector (U.Vector Int)
+                rasterizeRow row = Vector.map (U.take imageWidth) $ batches'' $ Vector.map deZigZag' row
                 imageWidth = fromIntegral $ ((x $ frameHeader state) * (fromIntegral $ h $ (frameComponents $ frameHeader state) M.! k)) `roundUp` max_x
                 imageHeight = fromIntegral $ ((y $ frameHeader state) * (fromIntegral $ v $ (frameComponents $ frameHeader state) M.! k)) `roundUp` max_y
 
-referenceidct :: [Int] -> [Int]
-referenceidct l = map (floor . f) indices
-  where f (x, y) = 0.25 * (sum $ map (\ ((u, v), a) -> g x y u v a) $ zip indices l)
+referenceidct :: U.Vector Int -> U.Vector Int
+referenceidct l = U.fromList $ map (floor . f) indices
+  where f (x, y) = 0.25 * (sum $ map (\ ((u, v), a) -> g x y u v a) $ zip indices $ U.toList l)
         g x y u v a = (c u) * (c v) * (fromIntegral a) *
                       (cos (((2 * (fromIntegral x) + 1) * (fromIntegral u) * pi)/16)) *
                       (cos (((2 * (fromIntegral y) + 1) * (fromIntegral v) * pi)/16))
@@ -252,12 +256,15 @@ fastIdct block = do
     forM_ [0..7] (idctCol block)
     return block
 
-myFastIdct :: [Int] -> [Int]
+{-# INLINE myFastIdct #-}
+myFastIdct :: U.Vector Int -> U.Vector Int
 myFastIdct block = runST $ do
   mutable_block <- M.new 64
-  mapM_ (\ (index, value) -> M.write mutable_block index value) $ zip [0..] dezigzagged
+  _ <- U.foldM_ (\ index value -> M.write mutable_block index value >> return (index + 1)) 0 dezigzagged
+  --mapM_ (\ (index, value) -> M.write mutable_block index value) $ zip [0..] $ U.toList dezigzagged
   output <- fastIdct mutable_block
-  out <- mapM (M.read output) $ map (\ (x, y) -> x * 8 + y) indices
-  return $ map fromIntegral out
-  where dezigzagged = [fromIntegral $ vec Vector.! (indices' x y) | x <- [0..7], y <- [0..7]]
-        vec = block `deepseq` Vector.fromList block
+  out <- U.mapM (M.read output) $ indicesV
+  return $ U.map fromIntegral out
+  --where dezigzagged = [fromIntegral $ block U.! (indices' x y) | x <- [0..7], y <- [0..7]]
+  where dezigzagged :: U.Vector Int16
+        dezigzagged = U.map (fromIntegral . (block U.!)) deZigZagIndices

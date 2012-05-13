@@ -14,9 +14,9 @@ import Debug.Trace (trace)
 import qualified Data.Map as M
 import qualified Data.List as L
 import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import Data.Int
 
-import Data.JPEG.Decode
 import Data.JPEG.JPEGState
 import Data.JPEG.Markers
 import Data.JPEG.Util
@@ -77,35 +77,43 @@ diff c tree = do
   put (cnt, b, M.insert c dc pred_m, eobrun)
   return dc
 
-type DataUnitFunc = [Int] -> Word8 -> HuffmanTree Word8 -> HuffmanTree Word8 -> Word8 -> Word8 -> Word8 -> Word8 -> StateT BitState Parser [Int]
+type DataUnitFunc = Word8 -> HuffmanTree Word8 -> HuffmanTree Word8 -> Word8 -> Word8 -> Word8 -> Word8 -> StateT BitState Parser (U.Vector Int)
+type UpdateDataUnitFunc = U.Vector Int -> DataUnitFunc
 
 decodeSequentialDataUnit :: DataUnitFunc
-decodeSequentialDataUnit existing c dctree actree 0 63 0 0 = do
-  dc <- decodeDCDataUnit existing c dctree actree 0 63 0 0
+decodeSequentialDataUnit c dctree actree 0 63 0 0 = do
+  dc <- decodeDCDataUnit c dctree actree 0 63 0 0
   ac <- decodeACScans dc c dctree actree 1 63 0 0
   return ac
 
 decodeDCDataUnit :: DataUnitFunc
-decodeDCDataUnit _ c tree _ _ _ _ al = do
+decodeDCDataUnit c tree _ _ _ _ al = do
   dc <- diff c tree
-  return $ (dc * (2 ^ al)) : replicate 63 0
+  return $ U.cons (dc * (2 ^ al)) $ U.replicate 63 0
 
-decodeSubsequentDCScans :: DataUnitFunc
+decodeSubsequentDCScans :: UpdateDataUnitFunc
 decodeSubsequentDCScans existing _ _ _ 0 0 ah al = do
   d <- receive (ah - al)
-  return $ ((head existing) + (d * (2 ^ al))) : (tail existing)
+  return $ U.cons ((U.head existing) + (d * (2 ^ al))) $ U.tail existing
 
-decodeACScans :: DataUnitFunc
-decodeACScans existing _ _ tree ss se ah al = do
-  (cnt, b, pred, eobrun) <- get
+decodeACScans :: UpdateDataUnitFunc
+decodeACScans v c dctree actree ss se ah al = do
+  l <- decodeACScans' (U.toList v) c dctree actree ss se ah al
+  return $ U.fromList l
+
+--decodeACScans' :: [Int] -> DataUnitFunc
+decodeACScans' existing _ _ tree ss se ah al = do
+  (cnt, b, pred, eobrun) <- existing `deepseq` get
   if eobrun == 0
     then do
       o <- helper ss middle []
-      return $ beginning ++ o ++ end
+      let out = beginning ++ o ++ end
+      out `deepseq` return out
     else do
       put (cnt, b, pred, eobrun - 1)
       modified <- appendBitToEach al middle (-1)
-      return $ beginning ++ modified ++ end
+      let out = beginning ++ modified ++ end
+      out `deepseq` return out
   where beginning = L.take (fromIntegral ss) existing
         middle = L.take (fromIntegral $ se - ss + 1) $ L.drop (fromIntegral ss) existing
         end = L.drop (fromIntegral $ se + 1) existing
@@ -132,14 +140,16 @@ decodeACScans existing _ _ tree ss se ah al = do
                let ml = fromIntegral $ length modified + 1
                helper (k + fromIntegral ml) (drop ml rzz) $ [(extend o' $ fromIntegral s) * (2 ^ al)] : modified : lzz
 
-appendBitToEach :: (Bits a, Ord a) => Word8 -> [a] -> Int -> StateT BitState Parser [a]
+appendBitToEach :: (Bits a, Ord a, NFData a) => Word8 -> [a] -> Int -> StateT BitState Parser [a]
 appendBitToEach _ [] _ = return []
 appendBitToEach _ (0 : vs) 0 = return []
 appendBitToEach bitposition (0 : vs) countzeros = do
   rest <- appendBitToEach bitposition vs $ countzeros - 1
-  return $ 0 : rest
+  let out = 0 : rest
+  out `deepseq` return out
 appendBitToEach bitposition (v : vs) countzeros = do
   b <- nextBit
   rest <- appendBitToEach bitposition vs countzeros
   let d = (fromIntegral b) * (2 ^ (fromIntegral bitposition))
-  return $ (if v < 0 then v - d else v + d) : rest
+  let out = (if v < 0 then v - d else v + d) : rest
+  out `deepseq` return out
