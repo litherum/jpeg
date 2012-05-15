@@ -20,17 +20,15 @@ outputPGM filename v = withFile filename WriteMode (\ h -> do
   hPutStr h $ (show $ U.length $ V.head v) ++ " " ++ (show $ V.length v) ++ " 255\n"
   V.mapM_ (U.mapM_ (\ i -> BS.hPut h $ BS.singleton $ fromIntegral i)) v)
 
-{-
-outputPPM :: FilePath -> [[(Word8, Word8, Word8)]] -> IO ()
+outputPPM :: FilePath -> V.Vector (V.Vector (Int, Int, Int)) -> IO ()
 outputPPM filename v = withFile filename WriteMode (\ h -> do
   hPutStr h "P6\n"
-  hPutStr h $ (show $ length $ head v) ++ " " ++ (show $ length v) ++ " 255\n"
-  mapM_ (\ l -> mapM_ (\ (r, g, b) -> BS.hPut h (BS.pack [fromIntegral r, fromIntegral g, fromIntegral b])) l) v)
--}
+  hPutStr h $ (show $ V.length $ V.head v) ++ " " ++ (show $ V.length v) ++ " 255\n"
+  V.mapM_ (\ l -> V.mapM_ (\ (r, g, b) -> BS.hPut h (BS.pack [fromIntegral r, fromIntegral g, fromIntegral b])) l) v)
 
 outputCorrectImage :: JPEGState -> M.Map Word8 (V.Vector (U.Vector Int)) -> String -> IO ()
 outputCorrectImage s m filename
---  | isJFIF s && (M.size $ frameComponents $ frameHeader s) == 3 = outputPPM filename $ convertJFIFImage s m
+  | isJFIF s && (M.size $ frameComponents $ frameHeader s) == 3 = outputPPM filename $ convertJFIFImage s m
   | otherwise = putStrLn (show $ M.size $ frameComponents $ frameHeader s) >> (mapM_ (\ (k, v) -> outputPGM ("output_" ++ (show k) ++ ".pgm") v) $ M.toList m)
 
 --conv = M.map (V.map (U.map fromIntegral))
