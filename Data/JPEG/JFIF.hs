@@ -1,5 +1,6 @@
 module Data.JPEG.JFIF where
 
+import Control.DeepSeq
 import Data.Ratio
 import Data.Word
 import qualified Data.ByteString as BS
@@ -9,6 +10,7 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import qualified Data.Vector.Generic.Base as GB
 
+import Data.JPEG.Instances
 import Data.JPEG.JPEGState
 import Data.JPEG.Util
 
@@ -27,27 +29,26 @@ resample xfrac yfrac values = V.generate (lengthfunc yfrac $ V.length values) f
         g xs = U.generate (lengthfunc xfrac $ U.length xs) h
           where h x = xs U.! (truncate $ xfrac * ((fromIntegral x) % 1))
 
-ycbcr2rgb :: (GB.Vector v c, Integral t, Integral c) => V.Vector (V.Vector (v c)) -> V.Vector (V.Vector (t, t, t))
-ycbcr2rgb components = (V.zipWith3 f) y cb cr
-  where y = components V.! 0
-        cb = components V.! 1
-        cr = components V.! 2
-        f a b c = V.zipWith3 helper (U.convert a) (U.convert b) (U.convert c)
-        helper y' cb' cr' = (back r, back g, back b)
-          where y = fromIntegral y'
-                cb = fromIntegral cb'
-                cr = fromIntegral cr'
-                back = floor . clamp 0 255
-                r = y                        + 1.402   * (cr - 128)
-                g = y - 0.34414 * (cb - 128) - 0.71414 * (cr - 128)
-                b = y + 1.772   * (cb - 128)
+ycbcr2rgb :: V.Vector (V.Vector (U.Vector Int)) -> V.Vector (V.Vector (U.Vector Int))
+ycbcr2rgb i = V.fromList [r, g, b]
+  where y = i V.! 0
+        cb = i V.! 1
+        cr = i V.! 2
+        r = V.zipWith3 (U.zipWith3 $ t fr) y cb cr
+        g = V.zipWith3 (U.zipWith3 $ t fg) y cb cr
+        b = V.zipWith3 (U.zipWith3 $ t fb) y cb cr
+        t f a b c = floor $ clamp 0 255 $ f (fromIntegral a) (fromIntegral b) (fromIntegral c)
+        fr y' cb' cr' = y'                         + 1.402   * (cr' - 128)
+        fg y' cb' cr' = y' - 0.34414 * (cb' - 128) - 0.71414 * (cr' - 128)
+        fb y' cb' cr' = y' + 1.772   * (cb' - 128)
 
-convertJFIFImage :: JPEGState -> M.Map Word8 (V.Vector (U.Vector Int)) -> V.Vector (V.Vector (Int, Int, Int))
-convertJFIFImage s m = ycbcr2rgb threed
+convertJFIFImage :: JPEGState -> M.Map Word8 (V.Vector (U.Vector Int)) -> V.Vector (V.Vector (U.Vector Int))
+convertJFIFImage s m = rgb `deepseq` rgb
   where order = L.sort $ M.keys m
         resampled = M.mapWithKey (\ k v -> resample (xratio k) (yratio k) v) m
         xratio c = (fromIntegral $ h $ (frameComponents $ frameHeader s) M.! c) % (fromIntegral maxx)
         yratio c = (fromIntegral $ v $ (frameComponents $ frameHeader s) M.! c) % (fromIntegral maxy)
         maxx = foldl1 max $ map h $ M.elems $ frameComponents $ frameHeader s
         maxy = foldl1 max $ map v $ M.elems $ frameComponents $ frameHeader s
-        threed = V.fromList $ map (\ k -> resampled M.! k) $ L.sort $ M.keys m
+        threed = resampled `deepseq` V.fromList $ map (\ k -> resampled M.! k) $ L.sort $ M.keys m
+        rgb = threed `deepseq` ycbcr2rgb threed
