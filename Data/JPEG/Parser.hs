@@ -28,6 +28,43 @@ type OrderInfo = V.Vector SingleOrderInfo
 gatherComponents :: OrderInfo -> [Word8]
 gatherComponents = (map (\ (_, c, _, _) -> c)) . V.toList
 
+component2Info :: FrameHeader -> [ScanComponent] -> JPEGState -> ScanComponent -> SingleOrderInfo
+component2Info frame_header scan_components s (ScanComponent cs td ta) = (count, cs, helper td fst, helper ta snd)
+  where count = countClusterItems frame_header scan_components cs
+        helper t f = M.findWithDefault Empty t $ f $ huffmanTrees s
+
+getInfo :: FrameHeader -> [ScanComponent] -> JPEGState -> OrderInfo
+getInfo frame_header scan_components s = V.fromList $ map (component2Info frame_header scan_components s) scan_components
+
+-- returns (max_x, max_y)
+maxFrameRatios :: FrameHeader -> (Int, Int)
+maxFrameRatios frame_header = (helper h, helper v)
+  where helper f = fromIntegral $ foldl1 max $ map f $ M.elems $ frameComponents frame_header
+
+-- returns (x, y)
+imageDimensionsToBlock :: FrameHeader -> Word8 -> (Int, Int)
+imageDimensionsToBlock frame_header cs = (helper x w max_x, helper y h max_y)
+  where helper f d max = (((fromIntegral $ f frame_header) `roundUp` 8) * d) `roundUp` max
+        (max_x, max_y) = maxFrameRatios frame_header
+        (w, h) = clusterDimensions frame_header cs
+
+-- returns (x, y)
+clusterDimensions :: FrameHeader -> Word8 -> (Int, Int)
+clusterDimensions frame_header cs = (helper h, helper v)
+  where helper f = fromIntegral $ f $ (frameComponents frame_header) M.! cs
+
+-- returns (x, y)
+fakeClusterDimensions :: FrameHeader -> [ScanComponent] -> Word8 -> (Int, Int)
+fakeClusterDimensions frame_header scan_components cs
+  | length scan_components == 1 = (1, 1)
+  | otherwise = clusterDimensions frame_header cs
+
+countClusterItems :: FrameHeader -> [ScanComponent] -> Word8 -> Int
+countClusterItems frame_header scan_components cs = a * b
+  where (a, b) = fakeClusterDimensions frame_header scan_components cs
+
+-----------------------------------------------------------------------------------------------------
+
 decodeMCU :: OrderInfo -> Word8 -> Word8 -> Word8 -> Word8 -> DataUnitFunc -> StateT BitState Parser (V.Vector (V.Vector (U.Vector Int)))
 decodeMCU info ss se ah al dataUnitFunc = V.mapM helper info
   where helper :: SingleOrderInfo -> StateT BitState Parser (V.Vector (U.Vector Int))
@@ -73,62 +110,35 @@ decodeUpdateRestartIntervals info ss se ah al ri dataUnitFunc existing = evalSta
 
 createNewComponents :: JPEGState -> ScanHeader -> Parser JPEGState
 createNewComponents s (ScanHeader scan_components ss se ah al) = do
-  raw <- decodeRestartIntervals info ss se ah al (restartInterval s) data_unit_func
+  raw <- decodeRestartIntervals (getInfo frame_header scan_components s) ss se ah al (restartInterval s) data_unit_func
   return $ s {partialData = V.foldl (\ m (scan_component, d) -> M.insert (cs scan_component) (frame (cs scan_component) d) m) (partialData s) $
     V.zip (V.fromList scan_components) $ componentize' raw}
   where frame_header = frameHeader s
-        info = V.fromList $ map component2Info scan_components
-        component2Info (ScanComponent cs td ta) = ( count cs
-                                                  , cs
-                                                  , M.findWithDefault Empty td $ fst $ huffmanTrees s
-                                                  , M.findWithDefault Empty ta $ snd $ huffmanTrees s
-                                                  )
         data_unit_func
           | n' == 0 || n' == 1 = decodeSequentialDataUnit
           | otherwise = decodeDCDataUnit
           where n' = n frame_header
         frame :: Word8 -> V.Vector (V.Vector (U.Vector Int)) -> V.Vector (V.Vector (U.Vector Int))
         frame cs = blockOrder'
-                    ((imageWidthToBlockForComponent cs) `roundUp` (fakeClusterWidth cs))
-                    (fakeClusterWidth cs)
-                    (fakeClusterHeight cs)
-        max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
-        max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
-        imageWidthToBlockForComponent cs = (((fromIntegral $ x frame_header) `roundUp` 8) * (clusterWidth cs)) `roundUp` max_x
-        imageHeightToBlockForComponent cs = (((fromIntegral $ y frame_header) `roundUp` 8) * (clusterHeight cs)) `roundUp` max_y
-        clusterWidth cs = fromIntegral $ h $ (frameComponents frame_header) M.! cs
-        clusterHeight cs = fromIntegral $ v $ (frameComponents frame_header) M.! cs
-        ns' = length scan_components
-        fakeClusterWidth cs
-          | ns' == 1 = 1
-          | otherwise = clusterWidth cs
-        fakeClusterHeight cs
-          | ns' == 1 = 1
-          | otherwise = clusterHeight cs
-        count cs = fakeClusterWidth cs * fakeClusterHeight cs
+                    (image_dimensions_to_block_x `roundUp` fake_cluster_width)
+                    fake_cluster_width fake_cluster_height
+          where (fake_cluster_width, fake_cluster_height) = fakeClusterDimensions frame_header scan_components cs
+                (image_dimensions_to_block_x, _) = imageDimensionsToBlock frame_header cs
 
 updateExistingComponents :: JPEGState -> ScanHeader -> Parser JPEGState
 updateExistingComponents s (ScanHeader scan_components ss se ah al) = do
-  raw <- decodeUpdateRestartIntervals info ss se ah al (restartInterval s) data_unit_func existing
-  --return $ s {partialData = V.foldl (\ m (scan_component, d) -> M.insert (cs scan_component) (frame (cs scan_component) d) m) (partialData s) $
-  --  V.zip (V.fromList scan_components) $ componentize' raw}
+  raw <- decodeUpdateRestartIntervals (getInfo frame_header scan_components s) ss se ah al (restartInterval s) data_unit_func existing
   return $ s {partialData = V.foldl (flip M.union) (partialData s) $ V.zipWith (apply $ partialData s) (V.fromList scan_components) $ componentize' raw}
   where frame_header = frameHeader s
-        info = V.fromList $ map component2Info scan_components
-        component2Info (ScanComponent cs td ta) = ( count cs
-                                                  , cs
-                                                  , M.findWithDefault Empty td $ fst $ huffmanTrees s
-                                                  , M.findWithDefault Empty ta $ snd $ huffmanTrees s
-                                                  )
         existing :: V.Vector (V.Vector (V.Vector (U.Vector Int)))
         existing = componentize' $ V.map (breakUp (partialData s)) $ V.fromList scan_components
         breakUp :: M.Map Word8 (V.Vector (V.Vector (U.Vector Int))) -> ScanComponent -> V.Vector (V.Vector (U.Vector Int))
         breakUp partial_data (ScanComponent cs _ _) = reverseBlockOrder
-                                                        (makeMultipleOf (imageWidthToBlockForComponent cs) $ fakeClusterWidth cs)
-                                                        (makeMultipleOf (imageHeightToBlockForComponent cs) $ fakeClusterHeight cs)
-                                                        (fakeClusterWidth cs)
-                                                        (fakeClusterHeight cs)
-                                                        (partial_data M.! cs)
+                                                        (makeMultipleOf image_width_to_block $ fake_cluster_width)
+                                                        (makeMultipleOf image_height_to_block $ fake_cluster_height)
+                                                        fake_cluster_width fake_cluster_height (partial_data M.! cs)
+          where (fake_cluster_width, fake_cluster_height) = fakeClusterDimensions frame_header scan_components cs
+                (image_width_to_block, image_height_to_block) = imageDimensionsToBlock frame_header cs
         data_unit_func
           | ss == 0 && se == 0 = decodeSubsequentDCScans
           | otherwise = decodeACScans
@@ -136,31 +146,12 @@ updateExistingComponents s (ScanHeader scan_components ss se ah al) = do
         apply previousBuffer' (ScanComponent cs _ _) updated = M.singleton cs wrap
           where previousBuffer = previousBuffer' M.! cs
                 diff = blockOrder'
-                         ((imageWidthToBlockForComponent cs) `roundUp` (fakeClusterWidth cs))
-                         (fakeClusterWidth cs)
-                         (fakeClusterHeight cs)
-                         updated
+                         (image_width_to_block `roundUp` fake_cluster_width)
+                         fake_cluster_width fake_cluster_height updated
                 wrap = diff `deepseq` (V.zipWith wrapRow diff previousBuffer V.++ V.drop (V.length diff) previousBuffer)
                 wrapRow new old = new V.++ (V.drop (V.length new) old)
-        frame :: Word8 -> V.Vector (V.Vector (U.Vector Int)) -> V.Vector (V.Vector (U.Vector Int))
-        frame cs = blockOrder'
-                    ((imageWidthToBlockForComponent cs) `roundUp` (fakeClusterWidth cs))
-                    (fakeClusterWidth cs)
-                    (fakeClusterHeight cs)
-        max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
-        max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
-        imageWidthToBlockForComponent cs = (((fromIntegral $ x frame_header) `roundUp` 8) * (clusterWidth cs)) `roundUp` max_x
-        imageHeightToBlockForComponent cs = (((fromIntegral $ y frame_header) `roundUp` 8) * (clusterHeight cs)) `roundUp` max_y
-        clusterWidth cs = fromIntegral $ h $ (frameComponents frame_header) M.! cs
-        clusterHeight cs = fromIntegral $ v $ (frameComponents frame_header) M.! cs
-        ns' = length scan_components
-        fakeClusterWidth cs
-          | ns' == 1 = 1
-          | otherwise = clusterWidth cs
-        fakeClusterHeight cs
-          | ns' == 1 = 1
-          | otherwise = clusterHeight cs
-        count cs = fakeClusterWidth cs * fakeClusterHeight cs
+                (fake_cluster_width, fake_cluster_height) = fakeClusterDimensions frame_header scan_components cs
+                (image_width_to_block, image_height_to_block) = imageDimensionsToBlock frame_header cs
 
 parseScan :: StateT JPEGState Parser ()
 parseScan = do
@@ -177,55 +168,6 @@ parseScan = do
                          se scan_header == 0 &&
                          ah scan_header == 0) = createNewComponents
             | otherwise = updateExistingComponents
-{-
-    where helper s frame_header scan_header = do
-          let (data_unit_func, existing) = case (n frame_header, scan_header) of
-                (0, _) -> (decodeSequentialDataUnit, repeat (repeat U.empty))
-                (1, _) -> (decodeSequentialDataUnit, repeat (repeat U.empty))
-                (2, ScanHeader _ 0 0 0 al) -> (decodeDCDataUnit, repeat (repeat U.empty))
-                (2, ScanHeader scan_components 0 0 _ _) -> (decodeSubsequentDCScans, batches $ map (breakUp (partialData s)) scan_components)
-                (2, ScanHeader scan_components _ _ _ _) -> (decodeACScans, batches $ map (breakUp (partialData s)) scan_components)
-          updated <- lift $ decodeRestartIntervals (map (component2Info s) (scanComponents scan_header))
-            (ss scan_header) (se scan_header) (ah scan_header) (al scan_header) (restartInterval s) existing data_unit_func
-          put s {partialData = foldl (flip M.union) (partialData s) $ zipWith (apply $ partialData s) (scanComponents scan_header) $ componentize updated}
-          where max_x = fromIntegral $ foldl1 max $ map h $ M.elems $ frameComponents frame_header
-                max_y = fromIntegral $ foldl1 max $ map v $ M.elems $ frameComponents frame_header
-                ns' = length $ scanComponents scan_header
-                component2Info s (ScanComponent cs td ta) = ( count cs
-                                                            , cs
-                                                            , M.findWithDefault Empty td $ fst $ huffmanTrees s
-                                                            , M.findWithDefault Empty ta $ snd $ huffmanTrees s
-                                                            )
-                breakUp :: M.Map Word8 [[U.Vector Int]] -> ScanComponent -> [[U.Vector Int]]
-                breakUp partial_data (ScanComponent cs _ _) = reverseBlockOrder
-                                                                (makeMultipleOf (imageWidthToBlockForComponent cs) $ fakeClusterWidth cs)
-                                                                (makeMultipleOf (imageHeightToBlockForComponent cs) $ fakeClusterHeight cs)
-                                                                (fakeClusterWidth cs)
-                                                                (fakeClusterHeight cs)
-                                                                (partial_data M.! cs)
-                apply previousBuffer' (ScanComponent cs _ _) updated
-                  | M.notMember cs previousBuffer' = M.singleton cs diff
-                  | otherwise = M.singleton cs wrap
-                  where previousBuffer = previousBuffer' M.! cs
-                        diff = blockOrder
-                                 ((imageWidthToBlockForComponent cs) `roundUp` (fakeClusterWidth cs))
-                                 (fakeClusterWidth cs)
-                                 (fakeClusterHeight cs)
-                                 updated
-                        wrap = zipWith wrapRow diff previousBuffer ++ drop (length diff) previousBuffer
-                        wrapRow new old = new ++ (drop (length new) old)
-                imageWidthToBlockForComponent cs = (((fromIntegral $ x frame_header) `roundUp` 8) * (clusterWidth cs)) `roundUp` max_x
-                imageHeightToBlockForComponent cs = (((fromIntegral $ y frame_header) `roundUp` 8) * (clusterHeight cs)) `roundUp` max_y
-                clusterWidth cs = fromIntegral $ h $ (frameComponents frame_header) M.! cs
-                clusterHeight cs = fromIntegral $ v $ (frameComponents frame_header) M.! cs
-                fakeClusterWidth cs
-                  | ns' == 1 = 1
-                  | otherwise = clusterWidth cs
-                fakeClusterHeight cs
-                  | ns' == 1 = 1
-                  | otherwise = clusterHeight cs
-                count cs = fakeClusterWidth cs * fakeClusterHeight cs
--}
 
 decodeFrame :: Parser JPEGState
 decodeFrame = do

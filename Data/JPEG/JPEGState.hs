@@ -31,12 +31,12 @@ type HuffmanTrees = (M.Map Word8 (HuffmanTree Word8), M.Map Word8 (HuffmanTree W
 
 type ApplicationData = BS.ByteString
 
-data JPEGState = JPEGState { quantizationTables           :: QuantizationTables
-                           , huffmanTrees                 :: HuffmanTrees
-                           , restartInterval              :: {-# UNPACK #-} !Word16
-                           , applicationData              :: [(Word8, ApplicationData)]
-                           , partialData                  :: M.Map Word8 (V.Vector (V.Vector (U.Vector Int)))
-                           , frameHeader                  :: FrameHeader
+data JPEGState = JPEGState { quantizationTables :: QuantizationTables
+                           , huffmanTrees       :: HuffmanTrees
+                           , restartInterval    :: {-# UNPACK #-} !Word16
+                           , applicationData    :: [(Word8, ApplicationData)]
+                           , partialData        :: M.Map Word8 (V.Vector (V.Vector (U.Vector Int)))
+                           , frameHeader        :: FrameHeader
                            }
   deriving (Show)
 
